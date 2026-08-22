@@ -1,0 +1,7 @@
+out/
+*.wav
+*.onnx
+*.npy
+.env
+DEBUG-COMMANDS.md
+HANDOVER.md

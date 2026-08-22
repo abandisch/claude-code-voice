@@ -1,0 +1,9 @@
+# Build-time only (throwaway "convert" stage). None of this reaches the runtime image.
+# torch CPU wheels come from PyTorch's own index (see --extra-index-url in Dockerfile).
+torch>=2.6,<2.9
+kokoro>=0.9.4           # hexgrad's own package: model architecture needed to load the weights
+transformers>=4.53,<5   # kokoro leaves this unpinned; ALBERT's attention API moves between majors
+huggingface_hub>=0.30
+onnx>=1.17              # export + structural inspection of the graph
+onnxruntime>=1.20       # used only to verify the export numerically
+numpy>=2

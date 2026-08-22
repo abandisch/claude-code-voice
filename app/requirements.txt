@@ -1,0 +1,5 @@
+# Runtime dependencies. Both are large-vendor packages from PyPI.
+# After the first successful build, run `make lock` to regenerate this file
+# with exact versions and --hash lines; pip then refuses anything that differs.
+onnxruntime>=1.20,<2
+numpy>=2,<3
