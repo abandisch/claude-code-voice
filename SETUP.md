@@ -1,76 +1,67 @@
 # Setting up on a new machine
 
 Goal: Claude Code speaks its `🔊` summary line through a local Kokoro container.
-This guide is written so you can hand it to a Claude Code session in this repo
-("read SETUP.md and set things up") — steps marked **[you]** need a human
-terminal (Docker socket, audio, and `~/.claude/hooks` are out of Claude's sandbox
-reach); the rest Claude can do.
 
-## 0. Prerequisites
+## Prerequisites
 
-- macOS on Apple Silicon (the image is `linux/arm64`; `afplay` and `say` are used).
-- Docker Desktop, running. Enable *Settings → General → Start Docker Desktop when
-  you sign in* so the container comes back after a reboot (it is started with
+- macOS on Apple Silicon (image is `linux/arm64`; the hook uses `afplay` and `say`).
+- Docker Desktop, running. Turn on *Settings → General → Start Docker Desktop when
+  you sign in* so the container returns after a reboot (it runs with
   `--restart unless-stopped`).
-- A free Docker ID, logged in to Docker Hardened Images: **[you]** `docker login dhi.io`.
-  (No account? Build with the stock Python images instead — see README → Build.)
-- `/usr/bin/jq` — ships with macOS 15+. Check: `/usr/bin/jq --version`.
-- Claude Code installed, with a global `~/.claude/CLAUDE.md`.
+- A free Docker ID, logged in to Docker Hardened Images: `docker login dhi.io`.
+  No account? Build with stock Python images instead — see `docs/DESIGN.md`.
+- `jq` — `/usr/bin/jq` ships with macOS 15+; otherwise `brew install jq`.
+- Claude Code installed and run at least once (so `~/.claude` exists).
+- Network access during `make build` to dhi.io, Docker Hub, PyPI,
+  download.pytorch.org and huggingface.co. On a managed work machine, a proxy
+  or firewall is the most likely snag.
 
-## 1. Build and run
-
-**[you]**, in the repo root:
+## Steps
 
 ```sh
-make build      # 5-10 min first time: downloads torch + weights, converts, runs the gates
+git clone https://github.com/abandisch/claude-code-voice.git
+cd claude-code-voice
+docker login dhi.io
+make build      # 5-10 min first time: downloads weights, converts to ONNX, runs the gates
 make run        # container "kokoro" on 127.0.0.1:8880
-make test       # prints /health and /voices, then speaks a sentence
+make test       # /health, /voices, then speaks a sentence
+make install    # hook + settings.json entry + 🔊 rule in ~/.claude/CLAUDE.md
 ```
 
-If `make test` prints `{"ok": true}` and you hear a voice, the server side is done.
+`make install` is idempotent and backs up anything it changes
+(`~/.claude/settings.json.bak.*`, `~/.claude/hooks/speak.sh.bak.*`). What it
+adds to your global CLAUDE.md is `hook/CLAUDE-snippet.md`; the persona line in
+it is optional — edit or delete.
 
-## 2. Install the hook
+## Verify
 
-1. Copy `hook/speak-kokoro.sh` to `~/.claude/hooks/speak.sh` and make it executable.
-   (If Claude is doing this: the directory may be write-denied for Bash — use the
-   Write tool.) If an older `speak.sh` exists, keep a copy as `speak-say.sh`.
-2. Register it as a Stop hook in `~/.claude/settings.json`:
+Open a **new** Claude Code session anywhere, ask anything, and listen.
 
-   ```json
-   "hooks": {
-     "Stop": [
-       { "hooks": [ { "type": "command", "command": "bash ~/.claude/hooks/speak.sh", "timeout": 30 } ] }
-     ]
-   }
-   ```
+- Hear a voice → done.
+- Hear the macOS `say` voice → hook works, container unreachable. `docker ps`
+  should show `kokoro`; `curl -s http://127.0.0.1:8880/health` should answer.
+- Hear nothing → the response had no `🔊` line (check the rule landed in
+  `~/.claude/CLAUDE.md`), or the Stop hook isn't registered (check
+  `~/.claude/settings.json` → `hooks.Stop`).
 
-3. Make sure the global `~/.claude/CLAUDE.md` tells Claude to end every response
-   with a line starting `🔊 ` followed by a one-sentence spoken summary. That
-   marker is what the hook extracts; without it nothing is spoken.
-
-## 3. Verify
-
-Start a Claude Code session anywhere and ask it anything. You should hear the
-`🔊` line in the configured voice. If you hear macOS `say` instead, the hook ran
-but could not reach the container: check `docker ps` shows `kokoro`, and
-`curl -s http://127.0.0.1:8880/health`.
-
-## 4. Options
+## Options
 
 - **Voice / speed:** `VOICE=` and `SPEED=` at the top of `~/.claude/hooks/speak.sh`.
-  Baked-in voices: `bm_lewis` (default), `bf_emma`. Others need the `VOICES` arg in
-  the Dockerfile changed and `make build` (voice ids: hexgrad/Kokoro-82M `voices/`).
-- **Port:** `PORT=8881 make run` and change `URL=` in the hook.
-- **Stop / restart:** `make stop`, `make run`. Logs: `make logs`.
-- **Supply-chain pinning** (optional, recommended once happy): README →
-  *After the first successful build*.
+  Baked in: `bm_lewis` (default), `bf_emma`. Others: add to `VOICES` in the
+  Dockerfile and `make build` (ids: hexgrad/Kokoro-82M `voices/`).
+- **Port:** `PORT=8881 make run`, then change `URL=` in the hook.
+- **Stop / restart / logs:** `make stop`, `make run`, `make logs`.
+- **Supply-chain pinning** (optional): `docs/DESIGN.md`.
 
-## 5. Uninstall
+## Uninstall
 
-`make stop`, `docker rmi kokoro-tts:local`, `docker network rm kokoro-net`, restore
-`~/.claude/hooks/speak-say.sh` as `speak.sh` (or remove the Stop hook entry).
+`make stop`, `docker rmi kokoro-tts:local`, `docker network rm kokoro-net`; remove
+the `hooks.Stop` entry from `~/.claude/settings.json` (or restore the `.bak`), delete
+`~/.claude/hooks/speak.sh`, and remove the "Spoken summary" section from
+`~/.claude/CLAUDE.md`.
 
-## For Claude sessions
+## Doing this with Claude Code
 
-Read `CLAUDE.md` and `wiki/index.md` first; `wiki/hook-integration.md` and
-`wiki/debugging-containers-playbook.md` cover the failure modes already met.
+Open Claude Code in the repo and say "set this up". `CLAUDE.md` tells it which
+steps it can run and which to hand back to you (anything touching Docker, audio,
+or `~/.claude`).

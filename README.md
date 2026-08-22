@@ -26,10 +26,18 @@ docker login dhi.io    # once
 make build             # 5-10 min first time: downloads weights, converts, verifies
 make run               # container "kokoro" on 127.0.0.1:8880
 make test              # speaks a test sentence
+make install           # installs the Claude Code hook + settings + 🔊 rule (idempotent)
 ```
 
-Then install the hook — [SETUP.md](SETUP.md) walks through it (and is written
-so a Claude Code session can do most of it for you).
+Start a new Claude Code session, ask it anything, and listen. `make install`
+puts the hook in `~/.claude/hooks/`, registers it in `~/.claude/settings.json`
+(backing the file up first) and adds the 🔊 rule to your global
+`~/.claude/CLAUDE.md` — see [`hook/CLAUDE-snippet.md`](hook/CLAUDE-snippet.md)
+for exactly what it adds. Details and troubleshooting: [SETUP.md](SETUP.md).
+
+**Prefer to let Claude drive?** Open Claude Code in this folder and say
+*"set this up"*. It reads `CLAUDE.md`, runs what it can, and hands you the
+few commands that need your terminal (Docker login, build, install).
 
 ## Configure
 
@@ -63,3 +71,10 @@ Details, including the verification gates and the pinning procedure:
 ## Licence
 
 Kokoro-82M weights are Apache-2.0 (hexgrad). Everything in this repo: MIT.
+
+---
+
+Built with [Claude Code](https://claude.com/claude-code) (Claude Fable 5) in
+conversation with the maintainer — Claude wrote the code, the docs and the
+`wiki/`; the maintainer set the requirements, ran the commands, and listened
+to fifteen voices so you don't have to.

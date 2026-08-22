@@ -1,7 +1,7 @@
 IMAGE ?= kokoro-tts:local
 PLATFORM ?= linux/arm64
 
-.PHONY: build run stop logs test scan digest lock sbom clean
+.PHONY: build run stop logs test install scan digest lock sbom clean
 
 ## Build the image (BuildKit; attaches SBOM + provenance attestations)
 build:
@@ -50,3 +50,7 @@ sbom:
 
 clean: stop
 	docker rmi $(IMAGE) 2>/dev/null || true
+
+## Install the Claude Code hook, settings entry and global CLAUDE.md rule (idempotent)
+install:
+	./install.sh
