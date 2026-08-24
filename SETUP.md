@@ -31,7 +31,7 @@ make install    # hooks (speak + notify) + settings.json entries + 🔊 rule in 
 `make install` is idempotent and backs up anything it changes
 (`~/.claude/settings.json.bak.*`, `~/.claude/hooks/speak.sh.bak.*`). What it
 adds to your global CLAUDE.md is `hook/CLAUDE-snippet.md`; the persona line in
-it is optional — edit or delete.
+it is optional — edit it, delete it, or pick a ready-made one from `hook/personas/`.
 
 ## Verify
 

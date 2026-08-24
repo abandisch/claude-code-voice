@@ -53,6 +53,10 @@ few commands that need your terminal (Docker login, build, install).
   handy for auditioning voices or startling the cat.
 - **Meetings:** `make mute` silences both hooks; `make unmute` restores the
   voice (and says so).
+- **Persona:** the voice reads whatever Claude writes — give it a character
+  with a one-paragraph rule in your global CLAUDE.md. Ready-made: butler,
+  ship's computer, laconic sysadmin, noir detective in
+  [`hook/personas/`](hook/personas/README.md).
 
 ## API
 
