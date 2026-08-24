@@ -14,6 +14,11 @@ input=$(cat)
 msg=$(printf '%s' "$input" | /usr/bin/jq -r '.message // empty')
 [ -n "$msg" ] || exit 0
 
+# Skip the ~60s idle reminder ("Claude is waiting for your input"), it fires
+# whenever you pause to think. Permission requests are the announcements worth
+# hearing.
+case "$msg" in *"waiting for your input"*) exit 0;; esac
+
 # Kokoro garbles prosody around em/en dashes; speak them as commas instead.
 msg=$(printf '%s' "$msg" | sed 's/[[:space:]]*[—–][[:space:]]*/, /g')
 
