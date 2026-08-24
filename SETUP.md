@@ -25,7 +25,7 @@ docker login dhi.io
 make build      # 5-10 min first time: downloads weights, converts to ONNX, runs the gates
 make run        # container "kokoro" on 127.0.0.1:8880
 make test       # /health, /voices, then speaks a sentence
-make install    # hook + settings.json entry + 🔊 rule in ~/.claude/CLAUDE.md
+make install    # hooks (speak + notify) + settings.json entries + 🔊 rule in ~/.claude/CLAUDE.md
 ```
 
 `make install` is idempotent and backs up anything it changes
@@ -46,7 +46,8 @@ Open a **new** Claude Code session anywhere, ask anything, and listen.
 
 ## Options
 
-- **Voice / speed:** `VOICE=` and `SPEED=` at the top of `~/.claude/hooks/speak.sh`.
+- **Voice / speed:** `VOICE=` and `SPEED=` at the top of `~/.claude/hooks/speak.sh`
+  and `~/.claude/hooks/notify.sh` (the waiting-on-you announcer).
   Baked in: `bf_emma` (default), `bm_fable`, `bm_daniel`, `am_adam`, `am_liam`, `am_fenrir`. Others: add to `VOICES` in the
   Dockerfile and `make build` (ids: hexgrad/Kokoro-82M `voices/`).
 - **Port:** `PORT=8881 make run`, then change `URL=` in the hook.
@@ -56,8 +57,8 @@ Open a **new** Claude Code session anywhere, ask anything, and listen.
 ## Uninstall
 
 `make stop`, `docker rmi kokoro-tts:local`, `docker network rm kokoro-net`; remove
-the `hooks.Stop` entry from `~/.claude/settings.json` (or restore the `.bak`), delete
-`~/.claude/hooks/speak.sh`, and remove the "Spoken summary" section from
+the `hooks.Stop` and `hooks.Notification` entries from `~/.claude/settings.json` (or restore the `.bak`), delete
+`~/.claude/hooks/speak.sh` and `~/.claude/hooks/notify.sh`, and remove the "Spoken summary" section from
 `~/.claude/CLAUDE.md`.
 
 ## Doing this with Claude Code

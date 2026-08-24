@@ -30,7 +30,9 @@ make install           # installs the Claude Code hook + settings + 🔊 rule (i
 ```
 
 Start a new Claude Code session, ask it anything, and listen. `make install`
-puts the hook in `~/.claude/hooks/`, registers it in `~/.claude/settings.json`
+puts two hooks in `~/.claude/hooks/` — the 🔊 speaker, and a notifier that
+announces when Claude is waiting on your permission or input, so you can
+wander off during long tasks — registers them in `~/.claude/settings.json`
 (backing the file up first) and adds the 🔊 rule to your global
 `~/.claude/CLAUDE.md` — see [`hook/CLAUDE-snippet.md`](hook/CLAUDE-snippet.md)
 for exactly what it adds. Details and troubleshooting: [SETUP.md](SETUP.md).
@@ -41,8 +43,8 @@ few commands that need your terminal (Docker login, build, install).
 
 ## Configure
 
-- **Voice / speed:** `VOICE=` and `SPEED=` at the top of the hook
-  (`hook/speak-kokoro.sh`). Baked in: `bf_emma` (British female, default),
+- **Voice / speed:** `VOICE=` and `SPEED=` at the top of each hook
+  (`hook/speak-kokoro.sh`, `hook/notify-kokoro.sh`). Baked in: `bf_emma` (British female, default),
   `bm_fable`, `bm_daniel`, `am_adam`, `am_liam`, `am_fenrir`. Any other Kokoro
   voice: add it to `VOICES` in the Dockerfile and `make build`.
 - **Port:** `PORT=8881 make run`, and update `URL=` in the hook.
