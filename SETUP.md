@@ -47,7 +47,7 @@ Open a **new** Claude Code session anywhere, ask anything, and listen.
 ## Options
 
 - **Voice / speed:** `VOICE=` and `SPEED=` at the top of `~/.claude/hooks/speak.sh`.
-  Baked in: `bm_lewis` (default), `bf_emma`. Others: add to `VOICES` in the
+  Baked in: `bf_emma` (default), `bm_fable`, `bm_daniel`, `am_adam`, `am_liam`, `am_fenrir`. Others: add to `VOICES` in the
   Dockerfile and `make build` (ids: hexgrad/Kokoro-82M `voices/`).
 - **Port:** `PORT=8881 make run`, then change `URL=` in the hook.
 - **Stop / restart / logs:** `make stop`, `make run`, `make logs`.

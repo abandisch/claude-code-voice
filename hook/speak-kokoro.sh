@@ -1,7 +1,7 @@
 #!/bin/bash
 # Claude Code Stop hook: speak the 🔊 summary line through the local Kokoro
 # container. Falls back to macOS `say` if the container is not running.
-VOICE="bm_lewis"
+VOICE="bf_emma"
 SPEED="1.0"
 FALLBACK_SAY_VOICE="Daniel (Enhanced)"
 URL="http://127.0.0.1:8880/speak"
@@ -21,6 +21,10 @@ if [ -z "$line" ]; then
     | grep '^🔊' | tail -1 | sed 's/^🔊[[:space:]]*//')
 fi
 [ -n "$line" ] || exit 0
+
+# Kokoro garbles prosody around em/en dashes (rushed, slurred clause after the
+# dash); speak them as commas instead.
+line=$(printf '%s' "$line" | sed 's/[[:space:]]*[—–][[:space:]]*/, /g')
 
 wav=$(mktemp -t kokoro)  # afplay sniffs the format; no .wav suffix needed
 body=$(/usr/bin/jq -cn --arg t "$line" --arg v "$VOICE" --argjson s "$SPEED" '{text:$t, voice:$v, speed:$s}')

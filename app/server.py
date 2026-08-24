@@ -2,9 +2,9 @@
 Minimal HTTP front-end for the Kokoro ONNX model. Standard library only.
 
   GET  /health          -> {"ok": true}
-  GET  /voices          -> ["bm_lewis", ...]
+  GET  /voices          -> ["bf_emma", ...]
   POST /speak           -> audio/wav (24 kHz, 16-bit mono)
-       body: {"text": "...", "voice": "bm_lewis", "speed": 1.0}
+       body: {"text": "...", "voice": "bf_emma", "speed": 1.0}
 """
 import io
 import json
@@ -20,9 +20,12 @@ import onnxruntime as ort
 from phonemize import phonemize
 
 MODEL_DIR = pathlib.Path(os.environ.get("KOKORO_MODEL_DIR", "/models"))
-DEFAULT_VOICE = os.environ.get("KOKORO_DEFAULT_VOICE", "bm_lewis")
+DEFAULT_VOICE = os.environ.get("KOKORO_DEFAULT_VOICE", "bf_emma")
 PORT = int(os.environ.get("PORT", "8880"))
 SAMPLE_RATE = 24_000
+# Leading silence so a playback device waking from idle (Bluetooth especially)
+# does not clip or distort the first word.
+LEAD_SILENCE_MS = int(os.environ.get("KOKORO_LEAD_SILENCE_MS", "300"))
 MAX_TOKENS = 510        # model context limit
 MAX_TEXT = 2_000        # refuse anything longer; this is a sentence-at-a-time service
 
@@ -56,12 +59,13 @@ class Kokoro:
 
 def to_wav(audio: np.ndarray) -> bytes:
     pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2")
+    lead = np.zeros(SAMPLE_RATE * LEAD_SILENCE_MS // 1000, dtype="<i2")
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(SAMPLE_RATE)
-        w.writeframes(pcm.tobytes())
+        w.writeframes(lead.tobytes() + pcm.tobytes())
     return buf.getvalue()
 
 

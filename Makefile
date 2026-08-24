@@ -23,7 +23,7 @@ test:
 	curl -sf http://127.0.0.1:8880/voices && echo
 	curl -sf -X POST http://127.0.0.1:8880/speak \
 		-H 'Content-Type: application/json' \
-		-d '{"text":"Text to speech is online and working.","voice":"bm_lewis"}' \
+		-d '{"text":"Text to speech is online and working.","voice":"bf_emma"}' \
 		-o /tmp/kokoro-test.wav && afplay /tmp/kokoro-test.wav
 
 ## Vulnerability scan of the built image (free, local)

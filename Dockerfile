@@ -32,7 +32,7 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.6,<2.
 COPY build/*.py .
 # Pin to a specific commit of hexgrad/Kokoro-82M once you have recorded one.
 ARG KOKORO_REVISION=main
-ARG VOICES="bm_lewis bf_emma"
+ARG VOICES="bf_emma bm_fable bm_daniel am_adam am_liam am_fenrir"
 RUN python export_onnx.py --revision "${KOKORO_REVISION}" --voices ${VOICES} --out /out
 
 ############################################################################
@@ -64,7 +64,7 @@ ENV PYTHONPATH=/pylibs \
     HOME=/tmp \
     OMP_NUM_THREADS=4 \
     KOKORO_MODEL_DIR=/models \
-    KOKORO_DEFAULT_VOICE=bm_lewis \
+    KOKORO_DEFAULT_VOICE=bf_emma \
     PORT=8880
 USER 65532:65532
 EXPOSE 8880

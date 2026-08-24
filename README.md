@@ -42,9 +42,9 @@ few commands that need your terminal (Docker login, build, install).
 ## Configure
 
 - **Voice / speed:** `VOICE=` and `SPEED=` at the top of the hook
-  (`hook/speak-kokoro.sh`). Baked in: `bm_lewis` (British male, default) and
-  `bf_emma` (British female). Any other Kokoro voice: add it to `VOICES` in the
-  Dockerfile and `make build`.
+  (`hook/speak-kokoro.sh`). Baked in: `bf_emma` (British female, default),
+  `bm_fable`, `bm_daniel`, `am_adam`, `am_liam`, `am_fenrir`. Any other Kokoro
+  voice: add it to `VOICES` in the Dockerfile and `make build`.
 - **Port:** `PORT=8881 make run`, and update `URL=` in the hook.
 - **Stop / logs:** `make stop`, `make logs`.
 
@@ -52,8 +52,8 @@ few commands that need your terminal (Docker login, build, install).
 
 ```
 GET  /health   -> {"ok": true}
-GET  /voices   -> ["bf_emma", "bm_lewis"]
-POST /speak    -> audio/wav   body: {"text": "...", "voice": "bm_lewis", "speed": 1.0}
+GET  /voices   -> ["am_adam", "am_fenrir", "am_liam", "bf_emma", "bm_daniel", "bm_fable"]
+POST /speak    -> audio/wav   body: {"text": "...", "voice": "bf_emma", "speed": 1.0}
 ```
 
 ## How it's built, and why you can trust it
