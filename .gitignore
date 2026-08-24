@@ -5,3 +5,4 @@ out/
 .env
 DEBUG-COMMANDS.md
 HANDOVER.md
+.claude/
