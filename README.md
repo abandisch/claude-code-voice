@@ -51,6 +51,8 @@ few commands that need your terminal (Docker login, build, install).
 - **Stop / logs:** `make stop`, `make logs`.
 - **Say anything:** `make say TEXT="Good evening" VOICE=bm_fable SPEED=1.2` —
   handy for auditioning voices or startling the cat.
+- **Meetings:** `make mute` silences both hooks; `make unmute` restores the
+  voice (and says so).
 
 ## API
 

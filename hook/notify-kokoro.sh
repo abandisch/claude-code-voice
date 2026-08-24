@@ -7,6 +7,9 @@ SPEED="1.0"
 FALLBACK_SAY_VOICE="Daniel (Enhanced)"
 URL="http://127.0.0.1:8880/speak"
 
+# Muted? (make mute / make unmute)
+[ -f "$HOME/.claude/hooks/mute" ] && exit 0
+
 input=$(cat)
 msg=$(printf '%s' "$input" | /usr/bin/jq -r '.message // empty')
 [ -n "$msg" ] || exit 0

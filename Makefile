@@ -3,7 +3,7 @@ PLATFORM ?= linux/arm64
 VOICE ?= bf_emma
 SPEED ?= 1.0
 
-.PHONY: build run stop logs test say install scan digest lock sbom clean
+.PHONY: build run stop logs test say mute unmute install scan digest lock sbom clean
 
 ## Build the image (BuildKit; attaches SBOM + provenance attestations)
 build:
@@ -66,3 +66,13 @@ say:
 	| curl -sf --max-time 30 -X POST http://127.0.0.1:8880/speak \
 		-H 'Content-Type: application/json' -d @- -o "$$wav" \
 	&& afplay "$$wav"; rm -f "$$wav"
+
+## Silence both hooks until further notice
+mute:
+	@mkdir -p $(HOME)/.claude/hooks && touch $(HOME)/.claude/hooks/mute
+	@echo "muted — make unmute to restore"
+
+## Remove the mute flag (confirms audibly)
+unmute:
+	@rm -f $(HOME)/.claude/hooks/mute
+	@$(MAKE) --no-print-directory say TEXT="Voice restored."

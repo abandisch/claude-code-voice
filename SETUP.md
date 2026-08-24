@@ -52,6 +52,7 @@ Open a **new** Claude Code session anywhere, ask anything, and listen.
   Dockerfile and `make build` (ids: hexgrad/Kokoro-82M `voices/`).
 - **Port:** `PORT=8881 make run`, then change `URL=` in the hook.
 - **Stop / restart / logs:** `make stop`, `make run`, `make logs`.
+- **Mute / unmute:** `make mute`, `make unmute` (flag file `~/.claude/hooks/mute`).
 - **Supply-chain pinning** (optional): `docs/DESIGN.md`.
 
 ## Uninstall
