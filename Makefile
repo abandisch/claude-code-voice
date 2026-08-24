@@ -1,7 +1,9 @@
 IMAGE ?= kokoro-tts:local
 PLATFORM ?= linux/arm64
+VOICE ?= bf_emma
+SPEED ?= 1.0
 
-.PHONY: build run stop logs test install scan digest lock sbom clean
+.PHONY: build run stop logs test say install scan digest lock sbom clean
 
 ## Build the image (BuildKit; attaches SBOM + provenance attestations)
 build:
@@ -54,3 +56,13 @@ clean: stop
 ## Install the Claude Code hook, settings entry and global CLAUDE.md rule (idempotent)
 install:
 	./install.sh
+
+## Speak anything: make say TEXT="Good evening" [VOICE=bm_fable] [SPEED=1.2]
+say:
+	@[ -n "$(TEXT)" ] || { echo 'usage: make say TEXT="hello there" [VOICE=bf_emma] [SPEED=1.0]'; exit 1; }
+	@wav=$$(mktemp -t kokoro); \
+	/usr/bin/jq -cn --arg t "$(TEXT)" --arg v "$(VOICE)" --argjson s "$(SPEED)" \
+		'{text:$$t, voice:$$v, speed:$$s}' \
+	| curl -sf --max-time 30 -X POST http://127.0.0.1:8880/speak \
+		-H 'Content-Type: application/json' -d @- -o "$$wav" \
+	&& afplay "$$wav"; rm -f "$$wav"

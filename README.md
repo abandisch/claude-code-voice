@@ -49,6 +49,8 @@ few commands that need your terminal (Docker login, build, install).
   voice: add it to `VOICES` in the Dockerfile and `make build`.
 - **Port:** `PORT=8881 make run`, and update `URL=` in the hook.
 - **Stop / logs:** `make stop`, `make logs`.
+- **Say anything:** `make say TEXT="Good evening" VOICE=bm_fable SPEED=1.2` —
+  handy for auditioning voices or startling the cat.
 
 ## API
 
