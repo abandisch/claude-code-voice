@@ -26,12 +26,16 @@ Follow `SETUP.md`. Split the work like this:
 
 ## Start here (any other task)
 
+`wiki/` is the maintainer's private working memory: gitignored, its own local git repo,
+never pushed. Clones will not have it. If it is present:
+
 1. `wiki/index.md` — the catalogue.
 2. `wiki/open-tasks.md` — what is in flight.
 3. `grep '^## \[' wiki/log.md | tail -5` — recent history.
 
 Only then open source files. Wiki conventions (frontmatter, wikilinks, log format,
-ingest/query/lint workflows) live in `wiki/CLAUDE.md` — follow them.
+ingest/query/lint workflows) live in `wiki/CLAUDE.md` — follow them. If `wiki/` is
+absent, start from `README.md` and `docs/DESIGN.md`.
 
 ## Maintaining the wiki
 
@@ -40,7 +44,7 @@ topic page, append a `log.md` entry, re-sync `open-tasks.md`, and add to
 `decisions.md` or a `diagnosis-*` page if a choice was made or a bug was chased.
 
 `HANDOVER.md` (untracked, gitignored) was the original session handover; the wiki
-supersedes it. Clones will not have it — nothing in it is needed.
+supersedes it. Neither is in the public repo — nothing in them is needed to build or run.
 
 ## Working here
 
@@ -48,5 +52,5 @@ supersedes it. Clones will not have it — nothing in it is needed.
   the Docker socket. Put commands for the operator one per fenced block in `DEBUG-COMMANDS.md` (local scratch, gitignored).
 - `run.sh`'s flags and the build's verification gates are deliberate. Diagnose before
   removing anything.
-- See `wiki/operator-workflow.md` for the paste-output workflow and the `🔊` contract.
+- The `🔊` line contract lives in `hook/CLAUDE-snippet.md` (what `make install` appends to `~/.claude/CLAUDE.md`).
 - Voice persona / address style is a per-user choice: keep it in your global `~/.claude/CLAUDE.md`, not here.

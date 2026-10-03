@@ -76,7 +76,7 @@ an image unless the conversion is verified against the original PyTorch model.
 The container runs read-only, non-root, with all capabilities dropped.
 
 Details, including the verification gates and the pinning procedure:
-[docs/DESIGN.md](docs/DESIGN.md). Project history and decisions: [`wiki/`](wiki/index.md).
+[docs/DESIGN.md](docs/DESIGN.md).
 
 ## Licence
 
@@ -85,6 +85,6 @@ Kokoro-82M weights are Apache-2.0 (hexgrad). Everything in this repo: MIT.
 ---
 
 Built with [Claude Code](https://claude.com/claude-code) (Claude Fable 5) in
-conversation with the maintainer — Claude wrote the code, the docs and the
-`wiki/`; the maintainer set the requirements, ran the commands, and listened
+conversation with the maintainer — Claude wrote the code and the docs; the
+maintainer set the requirements, ran the commands, and listened
 to fifteen voices so you don't have to.

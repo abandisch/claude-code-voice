@@ -29,8 +29,7 @@ noise in its vocoder, so the build first measures how much PyTorch disagrees
 with *itself*, checks the deterministic parts strictly, and then requires the
 shipped model to sit within that self-disagreement. It also inspects the graph
 for the classic export bug of a sequence length baked in as a constant. The
-full gate-by-gate description is in the docstring of `build/verify.py` and in
-`wiki/onnx-conversion-and-gates.md`.
+full gate-by-gate description is in the docstring of `build/verify.py`.
 
 **The exported graph is batch-size-1 only.** Removing the LSTM
 pack/pad wrappers is what keeps the sequence length dynamic, and that
