@@ -2,6 +2,7 @@ IMAGE ?= kokoro-tts:local
 PLATFORM ?= linux/arm64
 VOICE ?= bf_emma
 SPEED ?= 1.0
+APP_DIR ?= app
 
 .PHONY: build run stop logs test say mute unmute install scan digest lock sbom clean
 
@@ -36,16 +37,16 @@ scan:
 digest:
 	docker image inspect --format '{{index .RepoDigests 0}}{{"\n"}}{{.Id}}' $(IMAGE)
 
-## Regenerate app/requirements.txt with exact versions + sha256 hashes
+## Regenerate $(APP_DIR)/requirements.txt with exact versions + sha256 hashes
 lock:
-	docker run --rm -v "$(PWD)/app:/app" -w /tmp dhi.io/python:3.12-debian13-dev sh -c '\
+	docker run --rm -v "$(PWD)/$(APP_DIR):/app" -w /tmp dhi.io/python:3.12-debian13-dev sh -c '\
 		pip download -q --only-binary=:all: --platform manylinux_2_28_aarch64 \
 			--python-version 3.12 -d wheels -r /app/requirements.txt && \
 		for w in wheels/*.whl; do n=$$(basename $$w); \
 			printf "%s==%s --hash=sha256:%s\n" \
 				"$$(echo $$n | cut -d- -f1 | tr _ -)" "$$(echo $$n | cut -d- -f2)" \
 				"$$(sha256sum $$w | cut -d" " -f1)"; done | sort > /app/requirements.txt' \
-	&& cat app/requirements.txt
+	&& cat $(APP_DIR)/requirements.txt
 
 sbom:
 	docker sbom $(IMAGE) 2>/dev/null || docker buildx imagetools inspect $(IMAGE) --format '{{json .SBOM}}'
@@ -76,3 +77,50 @@ mute:
 unmute:
 	@rm -f $(HOME)/.claude/hooks/mute
 	@$(MAKE) --no-print-directory say TEXT="Voice restored."
+
+# --- Speech-to-text: Parakeet in its own container (stt/, 127.0.0.1:8881) ---
+STT_IMAGE ?= parakeet-stt:local
+STT_BUILD_ARGS ?=
+
+.PHONY: build-stt run-stt stop-stt logs-stt test-stt clean-stt lock-stt
+
+## Build the STT image (context stt/; first build runs NeMo export + gates)
+build-stt:
+	docker buildx build --platform $(PLATFORM) --sbom=true --provenance=true \
+		$(STT_BUILD_ARGS) --load -t $(STT_IMAGE) -f stt/Dockerfile stt
+
+run-stt:
+	IMAGE=$(STT_IMAGE) ./stt/run-stt.sh
+
+stop-stt:
+	docker rm -f parakeet 2>/dev/null || true
+
+logs-stt:
+	docker logs -f parakeet
+
+## Transcribe a sentence spoken by the running Kokoro container (needs `make run`)
+test-stt:
+	@for i in $$(seq 60); do curl -sf http://127.0.0.1:8881/health >/dev/null && break; sleep 1; done; \
+	curl -sf http://127.0.0.1:8881/health >/dev/null || { echo "parakeet is not answering on 127.0.0.1:8881 — make run-stt first, then check make logs-stt (it may still be loading or restart-looping)"; exit 1; }; \
+	curl -sf http://127.0.0.1:8880/health >/dev/null || { echo "kokoro is not answering on 127.0.0.1:8880 — make run first (it speaks the test sentence)"; exit 1; }; \
+	tmp=$$(mktemp -d -t parakeet); trap 'rm -rf "$$tmp"' EXIT; \
+	curl -sf --max-time 30 -X POST http://127.0.0.1:8880/speak \
+		-H 'Content-Type: application/json' \
+		-d '{"text":"The quick brown fox jumps over the lazy dog near the riverbank."}' \
+		-o "$$tmp/stt-src.wav" || { echo "FAIL: Kokoro /speak failed"; exit 1; }; \
+	/usr/bin/afconvert -f WAVE -d LEI16@16000 -c 1 "$$tmp/stt-src.wav" "$$tmp/stt-16k.wav" \
+		|| { echo "FAIL: afconvert could not make a 16 kHz mono WAV"; exit 1; }; \
+	out=$$(curl -s --fail-with-body --max-time 60 -X POST http://127.0.0.1:8881/transcribe \
+		-H 'Content-Type: audio/wav' --data-binary @"$$tmp/stt-16k.wav" -w '\n%{time_total}'); rc=$$?; \
+	json=$$(printf '%s\n' "$$out" | sed '$$d'); \
+	printf '%s\n' "$$json"; echo "wall time $$(printf '%s\n' "$$out" | tail -n 1) s"; \
+	[ $$rc -eq 0 ] || { echo "FAIL: parakeet /transcribe failed (curl exit $$rc)"; exit 1; }; \
+	printf '%s' "$$json" | /usr/bin/jq -e '.no_speech == false and (.text | ascii_downcase | contains("quick brown fox"))' >/dev/null \
+		|| { echo "FAIL: expected speech containing \"quick brown fox\""; exit 1; }
+
+## Regenerate stt/app/requirements.txt with exact versions + sha256 hashes
+lock-stt:
+	@$(MAKE) --no-print-directory lock APP_DIR=stt/app
+
+clean-stt: stop-stt
+	docker rmi $(STT_IMAGE) 2>/dev/null || true

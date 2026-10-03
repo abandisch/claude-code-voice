@@ -1,0 +1,8 @@
+# Build-time only (throwaway "convert" stage). None of this reaches the runtime image.
+# torch CPU wheels come from PyTorch's own index (see the RUN line in stt/Dockerfile).
+torch>=2.6,<2.9            # (keep in sync with stt/Dockerfile) <2.9 keeps torch.onnx.export's legacy (non-dynamo) default that NeMo's exporter uses
+nemo_toolkit[asr]==2.7.3   # NVIDIA's own toolkit: restores the .nemo and owns the export code; last 2.x release
+huggingface_hub>=0.24
+onnx>=1.17                 # export + structural inspection of the graph
+onnxruntime>=1.20,<2       # dynamic int8 quantisation, and the gates
+numpy                      # whatever NeMo's stack resolves; the gates run app/ code on it
