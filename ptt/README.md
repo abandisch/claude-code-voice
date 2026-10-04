@@ -9,7 +9,8 @@ mute flag (below) is a file.
 ## Before the first build
 
 - A Mac with Apple Silicon running macOS 13 or later.
-- Xcode Command Line Tools (`xcode-select --install`); the build uses `/usr/bin/swiftc`.
+- Xcode Command Line Tools with a Swift 6 toolchain (`xcode-select --install`); the build
+  uses `/usr/bin/swift`. Running the tests needs macOS 14 or later; the app runs on macOS 13.
 - The STT container running: `make build-stt`, then `make run-stt` (see `stt/README.md`).
 - Optional, once: `make ptt-cert`. macOS ties the Microphone and Accessibility grants to
   the app's signature, and an ad-hoc signed build gets a new one every time, so each
@@ -43,15 +44,18 @@ near the bottom-right of the screen; there is no Dock icon. On first launch:
 Pardon notices the Accessibility grant normally within a couple of seconds; if not, quit
 and reopen Pardon.
 
-`make test-ptt` compiles an unsigned copy into a temp directory and runs its self-test
-(the hotkey state machine, key decoding, WAV header, transcript sanitising, response
+`make test-ptt` runs the Swift package's tests in `ptt/Tests/` (macOS 14 or later), which
+cover the hotkey state machine, key decoding, WAV header, transcript sanitising, response
 parsing, the reply size cap, the focus check, the paste key lookup, the mute flag, the
 orb as a trigger (handover with the key, lost releases, which clicks count), and the
 orb's gesture and its drag grace for a recording, hit test, placement, saved position,
 looks and how long an outcome shows, animations, the idle frame rate and the Animate when
 idle toggle, voice level and level smoothing, and the characters (the registry, the saved
 choice, the arc reactor's ring geometry and animations, and that it draws nothing outside
-its circle); no GUI, microphone or network, and it touches only a temporary directory). Also
+its circle); they need no GUI, microphone or network and touch only a temporary directory.
+A pass ends with a `Test run with … tests … passed` line. Maintainers: setting
+`PARDON_CHECK_LOG` to a fresh file path while running the tests records the name of every
+executed check, one per line, so the number of checks can be counted. Also
 `make stop-ptt` and `make clean-ptt` (stops the app and removes `ptt/build` and the
 installed app; not the certificate or the entries in System Settings).
 
@@ -192,14 +196,17 @@ steady, larger, whiter core and a brighter segment ring.
 
 ## Every ingredient
 
-- ~3000 lines of our own Swift in `ptt/Sources/Pardon/`: `main.swift` (the entry point),
-  `App/`, `Hotkey/`, `Audio/`, `Transcription/` and `Delivery/` (the app), `Pet/` (the orb,
-  its blue character and the arc reactor character, both drawn in code with no image
-  files), and `SelfTest/` (the `--self-test` checks).
+- ~2000 lines of our own Swift in `ptt/Sources/`: `Pardon/main.swift` (the entry point) and
+  the `PardonKit` library: `App/`, `Hotkey/`, `Audio/`, `Transcription/` and `Delivery/` (the
+  app), `Pet/` (the orb, its blue character and the arc reactor character, both drawn in
+  code with no image files). The tests are in `ptt/Tests/PardonKitTests/` and are not
+  part of the app.
 - Apple system frameworks only: AppKit, AVFoundation, Carbon (keyboard layout lookup),
   CoreGraphics, QuartzCore (the orb's animation), ApplicationServices, ServiceManagement,
-  Foundation. No third-party code, no package manager.
-- `ptt/build.sh` (compile, Info.plist, entitlements, sign) and `ptt/make-cert.sh` (stock
+  Foundation; the tests use Swift Testing from the toolchain. No third-party code:
+  `ptt/Package.swift` uses the Swift Package Manager that ships with the toolchain and
+  declares no package dependencies.
+- `ptt/build.sh` (swift build, Info.plist, entitlements, sign) and `ptt/make-cert.sh` (stock
   `openssl` and `security`).
 
 ## Troubleshooting

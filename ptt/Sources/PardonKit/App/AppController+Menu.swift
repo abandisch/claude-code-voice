@@ -2,11 +2,11 @@ import AppKit
 import ServiceManagement
 
 extension AppController: NSMenuDelegate {
-    func menuWillOpen(_ menu: NSMenu) {
+    public func menuWillOpen(_ menu: NSMenu) {
         checkHealth()
     }
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
+    public func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let health = self.health
         let status = NSMenuItem(title: statusText(health), action: nil, keyEquivalent: "")

@@ -1,18 +1,16 @@
 #!/bin/bash
-# Build Pardon.app from the Swift sources under Sources/Pardon: compile, write Info.plist, sign. Does not install or open.
+# Build Pardon.app from the Swift package in ptt/: swift build, write Info.plist, sign. Does not install or open.
 #
-#   SWIFTC      compiler (default /usr/bin/swiftc, from Xcode Command Line Tools)
-#   SWIFTFLAGS  extra compiler flags, e.g. -sdk / -module-cache-path
-#   BUILD_DIR   output directory (default build; relative to ptt/ unless absolute)
-#   SIGN=0      skip signing (the self-test build)
+#   SWIFT       Swift driver (default /usr/bin/swift, from Xcode Command Line Tools)
+#   BUILD_DIR   output directory (default build; relative to ptt/ unless absolute); SwiftPM keeps its cache in BUILD_DIR/swiftpm
+#   SIGN=0      skip signing (the CodeQL build)
 #
 # Signs with the "Pardon" identity from `make ptt-cert` if present, else ad-hoc.
 # Run from anywhere:  ./ptt/build.sh   (or: make ptt)
 set -euo pipefail
 cd "$(dirname "$0")"
 
-SWIFTC="${SWIFTC:-/usr/bin/swiftc}"
-SWIFTFLAGS="${SWIFTFLAGS:-}"
+SWIFT="${SWIFT:-/usr/bin/swift}"
 BUILD_DIR="${BUILD_DIR:-build}"
 SIGN="${SIGN:-1}"
 BUNDLE_ID="io.github.abandisch.pardon"
@@ -22,16 +20,16 @@ die()  { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
 # hw.optional.arm64, not uname -m: under Rosetta (CodeQL's build tracer) uname reports x86_64.
 [ "$(uname -s)" = Darwin ] && [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] || die "needs macOS on Apple Silicon"
-[ -x "$SWIFTC" ] || die "swiftc not found at $SWIFTC — install Xcode Command Line Tools: xcode-select --install"
-sources=()
-while IFS= read -r f; do sources+=("$f"); done < <(find Sources/Pardon -name '*.swift' -type f | LC_ALL=C sort)
-[ "${#sources[@]}" -gt 0 ] || die "no Swift sources found under ptt/Sources/Pardon"
+[ -x "$SWIFT" ] || die "swift not found at $SWIFT — install Xcode Command Line Tools: xcode-select --install"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
-# SWIFTFLAGS is deliberately unquoted: it carries several flags.
-# shellcheck disable=SC2086
-"$SWIFTC" -O -swift-version 5 -target arm64-apple-macos13.0 $SWIFTFLAGS "${sources[@]}" -o "$APP/Contents/MacOS/Pardon"
+swiftpm=(-c release --arch arm64 --scratch-path "$BUILD_DIR/swiftpm")
+"$SWIFT" build "${swiftpm[@]}" --product Pardon
+bin="$("$SWIFT" build "${swiftpm[@]}" --show-bin-path)"
+# swift build targets the running process's architecture, which is x86_64 under Rosetta.
+[ "$(/usr/bin/lipo -archs "$bin/Pardon")" = arm64 ] || die "$bin/Pardon is not arm64 only — build from a native arm64 shell"
+cp "$bin/Pardon" "$APP/Contents/MacOS/Pardon"
 
 BUILD="$( (git describe --tags --always --dirty 2>/dev/null || echo unknown) | tr -cd 'A-Za-z0-9._+-')"
 BUILD="${BUILD:-unknown}"

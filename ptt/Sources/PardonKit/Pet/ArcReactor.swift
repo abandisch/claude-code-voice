@@ -24,11 +24,11 @@ func reactorChaseDashes(radius: CGFloat, count: Int, fill: CGFloat, lit: Int) ->
 
 final class ArcReactor: PetCharacter {
     static let displayName = "Arc reactor"
-    private typealias Palette = (ring: RGB, hot: RGB)
+    private typealias Palette = (ring: PetColor.RGB, hot: PetColor.RGB)
     private static let cyan: Palette = ((0.55, 0.92, 1.0), (0.97, 1.0, 1.0))
     private static let amber: Palette = ((1.0, 0.45, 0.2), (1.0, 0.86, 0.7))
     private static let grey: Palette = ((0.6, 0.62, 0.65), (0.86, 0.87, 0.88))
-    private static let white: RGB = (1, 1, 1)
+    private static let white: PetColor.RGB = (1, 1, 1)
     private static let plate = CGColor(srgbRed: 0.02, green: 0.06, blue: 0.11, alpha: 0.85)
 
     let stage = CALayer()
@@ -129,12 +129,12 @@ final class ArcReactor: PetCharacter {
         chaser.transform = segments.transform
         outer.transform = CATransform3DMakeRotation(CGFloat(angles[1]), 0, 0, 1)
         stage.opacity = opacity
-        backplate.borderColor = cg(palette.ring, 0.8)
-        outer.strokeColor = cg(palette.ring, 0.75)
-        inner.strokeColor = cg(palette.ring, 0.9)
-        wave.strokeColor = cg(palette.ring, 1)
+        backplate.borderColor = PetColor.cgColor(palette.ring, 0.8)
+        outer.strokeColor = PetColor.cgColor(palette.ring, 0.75)
+        inner.strokeColor = PetColor.cgColor(palette.ring, 0.9)
+        wave.strokeColor = PetColor.cgColor(palette.ring, 1)
         wave.opacity = 0
-        chaser.strokeColor = cg(mix(palette.ring, Self.white, 0.6), 1)
+        chaser.strokeColor = PetColor.cgColor(PetColor.mix(palette.ring, Self.white, 0.6), 1)
         chaser.opacity = look == .transcribing ? 1 : 0
         segments.opacity = look == .transcribing ? 0.35 : 0.85
         core.transform = CATransform3DIdentity
@@ -229,9 +229,9 @@ final class ArcReactor: PetCharacter {
     }
 
     private func shade(_ level: CGFloat) {
-        segments.strokeColor = cg(mix(palette.ring, Self.white, 0.6 * level), 1)
-        core.colors = [cg(palette.hot, 1), cg(mix(palette.ring, Self.white, level), 1)]
-        glow.colors = [cg(mix(palette.ring, Self.white, 0.3 * level), 0.55), cg(palette.ring, 0)]
+        segments.strokeColor = PetColor.cgColor(PetColor.mix(palette.ring, Self.white, 0.6 * level), 1)
+        core.colors = [PetColor.cgColor(palette.hot, 1), PetColor.cgColor(PetColor.mix(palette.ring, Self.white, level), 1)]
+        glow.colors = [PetColor.cgColor(PetColor.mix(palette.ring, Self.white, 0.3 * level), 0.55), PetColor.cgColor(palette.ring, 0)]
     }
 
     // The core at full voice is still inside the inner ring.

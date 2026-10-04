@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Pure pieces (exercised by --self-test)
+// MARK: - Pure pieces
 
 enum SideSetting: String, CaseIterable { case right, left, either }
 enum ModeSetting: String { case hold, tap }

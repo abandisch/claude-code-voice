@@ -1,7 +1,7 @@
 import Foundation
 
 let serverURL = URL(string: "http://127.0.0.1:8881")!
-let bundleID = "io.github.abandisch.pardon"
+public let bundleID = "io.github.abandisch.pardon"
 // "PARD": our own synthetic events carry it and the tap ignores them.
 let pardonEventTag: Int64 = 0x5041_5244
 let pasteDelay: TimeInterval = 0.1

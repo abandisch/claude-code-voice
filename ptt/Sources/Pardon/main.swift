@@ -1,11 +1,9 @@
-// Pardon entry point. Top-level statements are allowed only here once several files are compiled.
+// Pardon's entry point: the only file with top-level statements; everything else is in PardonKit.
 import AppKit
+import PardonKit
 
 // MARK: - Entry
 
-if CommandLine.arguments.contains("--self-test") {
-    exit(runSelfTest())
-}
 if NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? bundleID)
     .contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
     exit(0)

@@ -21,6 +21,9 @@ func capIdleFrameRate(_ a: CAAnimation) {
     (a as? CAAnimationGroup)?.animations?.forEach(capIdleFrameRate)
 }
 
+// Unlike smoothLevel's unit, NaN passes through.
+func clampUnit(_ x: Double) -> Double { min(max(x, 0), 1) }
+
 let petCharacters: [PetCharacter.Type] = [Orb.self, ArcReactor.self]
 let defaultPetCharacter: PetCharacter.Type = ArcReactor.self
 

@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Pure pieces (exercised by --self-test)
+// MARK: - Pure pieces
 
 enum PetLook: Equatable { case idle, listening, transcribing, sent, nothingHeard, error, needsPermission }
 

@@ -1,4 +1,4 @@
-# Advanced setup: CodeQL's default setup cannot build Pardon's Swift files in ptt/ (no Xcode project or Swift package).
+# Advanced setup: Pardon's Swift package is in ptt/, not at the root, and its app bundle is built by ptt/build.sh.
 # Pins are full commit SHAs; to bump, resolve the release tag to its commit and change init and analyze together.
 name: CodeQL
 
@@ -47,11 +47,11 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
 
-      # The real compiler, not the /usr/bin shim: CodeQL cannot trace SIP-protected binaries.
+      # The real swift, not the /usr/bin shim: CodeQL cannot trace SIP-protected binaries.
       - name: Build Pardon unsigned
         if: matrix.build-mode == 'manual'
         run: |
-          SDKROOT="$(xcrun --show-sdk-path)" SWIFTC="$(xcrun --find swiftc)" SIGN=0 ./ptt/build.sh
+          SDKROOT="$(xcrun --show-sdk-path)" SWIFT="$(xcrun --find swift)" SIGN=0 ./ptt/build.sh
 
       - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:

@@ -7,7 +7,7 @@ import AVFoundation
 // MARK: - App
 
 // Every path that leaves recording or busy ends in endSession() or abortSession().
-final class AppController: NSObject, NSApplicationDelegate {
+public final class AppController: NSObject, NSApplicationDelegate {
     let defaults = UserDefaults.standard
     let recorder = Recorder()
     let mute = KokoroMute()
@@ -53,7 +53,9 @@ final class AppController: NSObject, NSApplicationDelegate {
                     leftButtonDown: CGEventSource.buttonState(.combinedSessionState, button: .left))
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    public override init() { super.init() }
+
+    public func applicationDidFinishLaunching(_ notification: Notification) {
         defaults.register(defaults: [DefaultsKey.mode.rawValue: ModeSetting.hold.rawValue,
                                      DefaultsKey.side.rawValue: SideSetting.right.rawValue,
                                      DefaultsKey.autoSubmit.rawValue: false, DefaultsKey.muteKokoro.rawValue: true,
@@ -120,7 +122,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         refreshUI()
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    public func applicationWillTerminate(_ notification: Notification) {
         mute.release()
     }
 }

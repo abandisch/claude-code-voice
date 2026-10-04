@@ -9,3 +9,5 @@ HANDOVER.md
 wiki/
 __pycache__/
 ptt/build/
+ptt/.build/
+ptt/.swiftpm/

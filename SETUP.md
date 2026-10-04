@@ -56,13 +56,13 @@ Extra prerequisites:
 - Docker memory of at least 8 GB (Docker Desktop → Settings → Resources) and
   several GB of free build cache; the first build downloads ~2.4 GB of weights
   from huggingface.co.
-- Xcode Command Line Tools (`xcode-select --install`); Pardon builds with `/usr/bin/swiftc`.
+- Xcode Command Line Tools (`xcode-select --install`); Pardon builds with `/usr/bin/swift` (a Swift 6 toolchain).
 
 ```sh
 make build-stt   # 15-30 min first time: downloads weights, exports to ONNX, runs the gates
 make run-stt     # container "parakeet" on 127.0.0.1:8881; ready once make logs-stt shows "parakeet ready:"
 make test-stt    # needs Kokoro running too (make run): it speaks the sentence Parakeet must transcribe
-make test-ptt    # Pardon's self-test (no GUI, microphone or network)
+make test-ptt    # Pardon's tests (macOS 14 or later; no GUI, microphone or network)
 make ptt-cert    # optional, once: signing identity so rebuilds keep their permissions
 make ptt         # builds Pardon, installs it in ~/Applications and starts it
 ```

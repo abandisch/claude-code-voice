@@ -2,9 +2,9 @@ import QuartzCore
 
 final class Orb: PetCharacter {
     static let displayName = "Orb"
-    private typealias Palette = (centre: RGB, edge: RGB)
+    private typealias Palette = (centre: PetColor.RGB, edge: PetColor.RGB)
     private static let blue: Palette = ((0.62, 0.80, 1.0), (0.22, 0.48, 0.96))
-    private static let white: RGB = (0.97, 0.98, 1.0)
+    private static let white: PetColor.RGB = (0.97, 0.98, 1.0)
     private static let amber: Palette = ((1.0, 0.72, 0.45), (0.92, 0.36, 0.18))
     private static let grey: Palette = ((0.72, 0.72, 0.74), (0.45, 0.45, 0.48))
 
@@ -77,9 +77,9 @@ final class Orb: PetCharacter {
         for layer in [stage, glow, body, shimmer, flash] { layer.removeAllAnimations() }
         stage.transform = CATransform3DIdentity
         stage.opacity = opacity
-        body.colors = [cg(palette.centre), cg(palette.edge)]
-        glow.backgroundColor = cg(palette.edge)
-        glow.shadowColor = cg(palette.edge)
+        body.colors = [PetColor.cgColor(palette.centre), PetColor.cgColor(palette.edge)]
+        glow.backgroundColor = PetColor.cgColor(palette.edge)
+        glow.shadowColor = PetColor.cgColor(palette.edge)
         glow.shadowOpacity = glowOpacity
         shimmer.opacity = look == .transcribing ? 0.7 : 0
         flash.opacity = 0
@@ -135,12 +135,12 @@ final class Orb: PetCharacter {
 
     private func listen(_ level: CGFloat) {
         let scale = 1 + 0.12 * level
-        let edge = mix(Self.blue.edge, Self.white, level * 0.6)
+        let edge = PetColor.mix(Self.blue.edge, Self.white, level * 0.6)
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.1)
         stage.transform = CATransform3DMakeScale(scale, scale, 1)
-        body.colors = [cg(mix(Self.blue.centre, Self.white, level)), cg(edge)]
-        glow.shadowColor = cg(edge)
+        body.colors = [PetColor.cgColor(PetColor.mix(Self.blue.centre, Self.white, level)), PetColor.cgColor(edge)]
+        glow.shadowColor = PetColor.cgColor(edge)
         glow.shadowOpacity = Float(0.6 + 0.4 * level)
         CATransaction.commit()
     }
