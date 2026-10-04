@@ -19,6 +19,19 @@ enum OrbOutcome: Equatable {
     }
 }
 
+// Each outcome gets a generation; a decay scheduled for an older one must not clear a newer outcome.
+struct OutcomeDecay {
+    static let seconds: TimeInterval = 10
+    private(set) var generation = 0
+
+    mutating func next() -> Int {
+        generation += 1
+        return generation
+    }
+
+    func isCurrent(_ g: Int) -> Bool { g == generation }
+}
+
 // Listening wins, then transcribing until an outcome ends it, then permissions, then the server, then the outcome.
 func orbLook(ui: AppController.UIState, health: Health, outcome: OrbOutcome) -> OrbLook {
     if ui == .listening { return .listening }
@@ -61,23 +74,40 @@ func smoothLevel(_ previous: Double, toward input: Double) -> Double {
 
 struct OrbGesture {
     static let dragThreshold: CGFloat = 4
+    // A hold recording this press started gives way to a drag only past this distance, within this time of the press.
+    static let recordingDragThreshold: CGFloat = 10
+    static let recordingDragGrace: TimeInterval = 1.5
     enum Kind: Equatable { case none, press, drag }
 
     private(set) var kind = Kind.none
     private(set) var origin = CGPoint.zero
+    private var pressTime: TimeInterval = 0
+    private var sawRecording = false
     private var locked = false
 
-    mutating func down(at p: CGPoint) {
+    // The time and cancellable defaults are for the pure-logic checks; the window always passes the clock and the flag.
+    mutating func down(at p: CGPoint, time: TimeInterval = 0) {
         kind = .press
         origin = p
+        pressTime = time
+        sawRecording = false
         locked = false
     }
 
-    // True once, when the press becomes a drag. A press that has seen recording never drags.
-    mutating func moved(to p: CGPoint, recording: Bool) -> Bool {
+    // True once, when the press becomes a drag; a press that has seen a recording it may not cancel never drags.
+    mutating func moved(to p: CGPoint, recording: Bool, cancellable: Bool = false, at t: TimeInterval = 0) -> Bool {
         guard kind == .press else { return false }
-        if recording { locked = true }
-        guard !locked, hypot(p.x - origin.x, p.y - origin.y) > Self.dragThreshold else { return false }
+        if recording {
+            sawRecording = true
+            if !cancellable { locked = true }
+        }
+        guard !locked else { return false }
+        let distance = hypot(p.x - origin.x, p.y - origin.y)
+        if sawRecording {
+            guard recording, t - pressTime <= Self.recordingDragGrace, distance > Self.recordingDragThreshold else { return false }
+        } else {
+            guard distance > Self.dragThreshold else { return false }
+        }
         kind = .drag
         return true
     }
@@ -142,8 +172,18 @@ protocol PetCharacter: AnyObject {
     init()
     // Fills size; the clickable circle is orbDiameter wide at the centre.
     func makeLayer(size: CGSize) -> CALayer
+    // False stills the idle, sent, nothing heard and error looks' repeating motion; a change restyles on the next apply.
+    var animatesWhenIdle: Bool { get set }
     // Called on every look change and level update; level is 0 unless listening; reduceMotion means static looks only.
     func apply(_ look: OrbLook, level: Double, reduceMotion: Bool)
+}
+
+// Measured: full rate doubles the window server's work for no visible gain.
+let petIdleFrameRate = CAFrameRateRange(minimum: 24, maximum: 30, preferred: 30)
+
+func capIdleFrameRate(_ a: CAAnimation) {
+    a.preferredFrameRateRange = petIdleFrameRate
+    (a as? CAAnimationGroup)?.animations?.forEach(capIdleFrameRate)
 }
 
 let petCharacters: [PetCharacter.Type] = [Orb.self, ArcReactor.self]
@@ -170,6 +210,8 @@ final class Orb: PetCharacter {
     private let flash = CALayer()
     private var look: OrbLook?
     private var reduceMotion = false
+    // Clearing look forces the next apply past the same-look guard.
+    var animatesWhenIdle = true { didSet { if animatesWhenIdle != oldValue { look = nil } } }
 
     private static func cg(_ c: RGB) -> CGColor { CGColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: 1) }
 
@@ -265,6 +307,7 @@ final class Orb: PetCharacter {
 
     // One cycle about every 4 s.
     private func breathe(around opacity: Float, after delay: CFTimeInterval) {
+        guard animatesWhenIdle else { return }
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = opacity - 0.12
         fade.toValue = min(opacity + 0.12, 1)
@@ -278,6 +321,7 @@ final class Orb: PetCharacter {
         group.repeatCount = .infinity
         group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         if delay > 0 { group.beginTime = CACurrentMediaTime() + delay }
+        capIdleFrameRate(group)
         stage.add(group, forKey: "breath")
     }
 
@@ -335,6 +379,7 @@ final class OrbWindow {
     var onRelease: () -> Void = {}
     var onDrag: () -> Void = {}
     var isRecording: () -> Bool = { false }
+    var canCancelRecording: () -> Bool = { false }
     private let defaults: UserDefaults
     private let menu: NSMenu
     private let view: OrbView
@@ -457,6 +502,7 @@ final class OrbWindow {
     }
 
     private func render() {
+        character?.animatesWhenIdle = defaults.bool(forKey: DefaultsKey.animateIdle.rawValue)
         character?.apply(look, level: level, reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
@@ -467,7 +513,7 @@ final class OrbWindow {
     }
 
     fileprivate func pressed() {
-        gesture.down(at: NSEvent.mouseLocation)
+        gesture.down(at: NSEvent.mouseLocation, time: now())
         pressOrigin = panel.frame.origin
         setPressed(true)
         onPress()
@@ -475,7 +521,7 @@ final class OrbWindow {
 
     fileprivate func dragged() {
         let p = NSEvent.mouseLocation
-        if gesture.moved(to: p, recording: isRecording()) {
+        if gesture.moved(to: p, recording: isRecording(), cancellable: canCancelRecording(), at: now()) {
             setPressed(false)
             onDrag()
         }
@@ -586,6 +632,61 @@ func runPetSelfTest(_ check: (String, Bool) -> Void) {
     g.down(at: .zero)
     check("gesture: diagonal 3.96 is a press", !g.moved(to: CGPoint(x: 2.8, y: 2.8), recording: false) && g.kind == .press)
 
+    let o = CGPoint(x: 100, y: 100), grace = OrbGesture.recordingDragGrace
+    check("gesture: recording drag needs 10 pt within 1.5 s", OrbGesture.recordingDragThreshold == 10 && grace == 1.5)
+    g = OrbGesture()
+    g.down(at: o, time: 0)
+    check("gesture: own recording, exactly 10 pt is still a press",
+          !g.moved(to: CGPoint(x: 110, y: 100), recording: true, cancellable: true, at: 0.5) && g.kind == .press)
+    check("gesture: own recording, past 10 pt within grace becomes a drag",
+          g.moved(to: CGPoint(x: 110.5, y: 100), recording: true, cancellable: true, at: 0.5) && g.kind == .drag)
+    check("gesture: a recording drag is reported once",
+          !g.moved(to: CGPoint(x: 200, y: 100), recording: false, cancellable: false, at: 0.6) && g.up() == .drag)
+    g.down(at: o, time: 10)
+    check("gesture: own recording, exactly the grace period still drags",
+          g.moved(to: CGPoint(x: 120, y: 100), recording: true, cancellable: true, at: 10 + grace))
+    _ = g.up()
+    g.down(at: o, time: 10)
+    check("gesture: own recording, just past the grace period is ignored",
+          !g.moved(to: CGPoint(x: 120, y: 100), recording: true, cancellable: true, at: 10 + grace + 0.01)
+          && g.up() == .press)
+    g.down(at: o, time: 0)
+    check("gesture: small move in grace, large move after it, stays a press",
+          !g.moved(to: CGPoint(x: 105, y: 100), recording: true, cancellable: true, at: 0.5)
+          && !g.moved(to: CGPoint(x: 200, y: 100), recording: true, cancellable: true, at: 2) && g.up() == .press)
+    g.down(at: o, time: 0)
+    check("gesture: recording it may not cancel never drags, even in grace",
+          !g.moved(to: CGPoint(x: 200, y: 100), recording: true, cancellable: false, at: 0.3)
+          && !g.moved(to: CGPoint(x: 300, y: 100), recording: true, cancellable: true, at: 0.4) && g.up() == .press)
+    g.down(at: o, time: 0)
+    check("gesture: recording ended in grace, no drag",
+          !g.moved(to: CGPoint(x: 101, y: 100), recording: true, cancellable: true, at: 0.3)
+          && !g.moved(to: CGPoint(x: 200, y: 100), recording: false, cancellable: false, at: 0.8) && g.up() == .press)
+    g.down(at: o, time: 0)
+    check("gesture: before recording, 4 pt rule with no time limit",
+          !g.moved(to: CGPoint(x: 104, y: 100), recording: false, cancellable: false, at: 5)
+          && g.moved(to: CGPoint(x: 105, y: 100), recording: false, cancellable: false, at: 5))
+    _ = g.up()
+    g.down(at: o, time: 0)
+    _ = g.moved(to: CGPoint(x: 101, y: 100), recording: true, cancellable: false, at: 0.3)
+    g.down(at: o, time: 5)
+    check("gesture: a new press clears the lock and the press time",
+          g.moved(to: CGPoint(x: 112, y: 100), recording: true, cancellable: true, at: 5.5))
+    _ = g.up()
+    g.down(at: o, time: 0)
+    _ = g.moved(to: CGPoint(x: 101, y: 100), recording: true, cancellable: true, at: 0.3)
+    g.down(at: o, time: 1)
+    check("gesture: a new press forgets the recording it saw",
+          g.moved(to: CGPoint(x: 105, y: 100), recording: false, cancellable: false, at: 1.1))
+    _ = g.up()
+
+    var decay = OutcomeDecay()
+    let older = decay.next()
+    check("decay: the newest outcome's decay clears it", decay.isCurrent(older))
+    let newer = decay.next()
+    check("decay: a stale decay is ignored", !decay.isCurrent(older) && decay.isCurrent(newer))
+    check("decay: about ten seconds", OutcomeDecay.seconds == 10)
+
     let circle = CGRect(x: 100, y: 100, width: 56, height: 56)
     check("hit: centre", orbHit(CGPoint(x: 128, y: 1000 - 128), circle: circle, primaryHeight: 1000))
     check("hit: on the edge", orbHit(CGPoint(x: 156, y: 1000 - 128), circle: circle, primaryHeight: 1000))
@@ -669,6 +770,57 @@ func runPetSelfTest(_ check: (String, Bool) -> Void) {
     check("motion: sent flashes once", parts.count == 4 && parts[3].animationKeys()?.contains("once") == true)
     orb.apply(.needsPermission, level: 0, reduceMotion: false)
     check("motion: needs permission is still", keys(root).isEmpty)
+
+    func capped(_ a: CAAnimation?) -> Bool { a?.preferredFrameRateRange == petIdleFrameRate }
+    func cappedGroup(_ a: CAAnimation?) -> Bool {
+        let children = (a as? CAAnimationGroup)?.animations ?? []
+        return capped(a) && children.count == 2 && children.allSatisfy(capped)
+    }
+    func uncapped(_ a: CAAnimation?) -> Bool {
+        guard let a = a else { return false }
+        return ([a] + ((a as? CAAnimationGroup)?.animations ?? [])).allSatisfy { $0.preferredFrameRateRange == .default }
+    }
+    check("idle rate: 30 frames a second, no fewer than 24", petIdleFrameRate.minimum == 24 && petIdleFrameRate.maximum == 30
+          && petIdleFrameRate.preferred == 30)
+    for look in [OrbLook.idle, .sent, .nothingHeard, .error] {
+        orb.apply(look, level: 0, reduceMotion: false)
+        check("idle rate: Orb \(look) breath is capped, its parts too", cappedGroup(stage.animation(forKey: "breath")))
+    }
+    orb.apply(.sent, level: 0, reduceMotion: false)
+    let flashed = parts.count == 4 ? parts[3].animation(forKey: "once") : nil
+    orb.apply(.nothingHeard, level: 0, reduceMotion: false)
+    check("idle rate: Orb flash and fade run at the display's rate", uncapped(flashed) && uncapped(stage.animation(forKey: "once")))
+    orb.apply(.transcribing, level: 0, reduceMotion: false)
+    check("idle rate: Orb swirl runs at the display's rate", parts.count == 4 && uncapped(parts[2].animation(forKey: "swirl")))
+
+    let looks: [OrbLook] = [.idle, .listening, .transcribing, .sent, .nothingHeard, .error, .needsPermission]
+    orb.apply(.idle, level: 0, reduceMotion: false)
+    orb.animatesWhenIdle = false
+    orb.apply(.idle, level: 0, reduceMotion: false)
+    check("animate when idle: turning it off restyles the same look, Orb idle is still", keys(root).isEmpty)
+    orb.apply(.sent, level: 0, reduceMotion: false)
+    check("animate when idle: off, Orb sent still flashes once, without breath",
+          named(root) == ["once"] && parts.count == 4 && parts[3].animation(forKey: "once") != nil)
+    orb.apply(.nothingHeard, level: 0, reduceMotion: false)
+    check("animate when idle: off, Orb nothing heard still fades, without breath",
+          named(root) == ["once"] && stage.animation(forKey: "once") != nil)
+    orb.apply(.error, level: 0, reduceMotion: false)
+    check("animate when idle: off, Orb error is still", keys(root).isEmpty)
+    orb.apply(.transcribing, level: 0, reduceMotion: false)
+    check("animate when idle: off, Orb transcribing still swirls", parts.count == 4 && uncapped(parts[2].animation(forKey: "swirl")))
+    orb.apply(.idle, level: 0, reduceMotion: false)
+    let offIdle = keys(root).isEmpty
+    orb.animatesWhenIdle = true
+    orb.apply(.idle, level: 0, reduceMotion: false)
+    check("animate when idle: turning it back on restyles the same look, Orb idle breathes, capped",
+          offIdle && cappedGroup(stage.animation(forKey: "breath")))
+    check("animate when idle: Reduce Motion stills every Orb look either way", [false, true].allSatisfy { on in
+        orb.animatesWhenIdle = on
+        return looks.allSatisfy { look in
+            orb.apply(look, level: 1, reduceMotion: true)
+            return keys(root).isEmpty
+        }
+    })
 
     let names = petCharacters.map { $0.displayName }
     check("characters: two, with unique names", names.count == 2 && Set(names).count == names.count)

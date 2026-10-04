@@ -41,6 +41,8 @@ struct HotkeyMachine {
     private var tapStart: TimeInterval?
     private var pointerHeld = false
     private var pointerTapStart: TimeInterval?
+    // The session was armed by the press still held; pointerHeld is true for any held press, a lost-release one too.
+    private var pressArmed = false
 
     init(mode: ModeSetting = .hold, side: SideSetting = .right) {
         self.mode = mode
@@ -78,6 +80,11 @@ struct HotkeyMachine {
         case .armed, .recording: return trigger == .pointer
         default: return false
         }
+    }
+
+    // A hold recording armed by the orb press still held: a drag may cancel it.
+    var pointerRecordingCancellable: Bool {
+        mode == .hold && isRecording && trigger == .pointer && pressArmed
     }
 
     mutating func optionDown(_ key: OptionKey, bare: Bool, at t: TimeInterval) -> HotkeyOutput {
@@ -128,12 +135,14 @@ struct HotkeyMachine {
     // A press while still held means the last release was lost: treat it as a fresh press.
     mutating func pointerDown(at t: TimeInterval) -> HotkeyOutput {
         pointerHeld = true
+        pressArmed = false
         guard phase != .busy, owns(.pointer) else { return HotkeyOutput() }
         switch mode {
         case .hold:
             guard phase == .idle else { return HotkeyOutput() }
             trigger = .pointer
             phase = .armed(t)
+            pressArmed = true
             return HotkeyOutput(deadline: t + Self.armDelay)
         case .tap:
             pointerTapStart = t
@@ -144,6 +153,7 @@ struct HotkeyMachine {
     mutating func pointerUp(at t: TimeInterval) -> HotkeyOutput {
         guard pointerHeld else { return HotkeyOutput() }
         pointerHeld = false
+        pressArmed = false
         guard phase != .busy, owns(.pointer) else { return HotkeyOutput() }
         switch mode {
         case .hold:
@@ -168,11 +178,16 @@ struct HotkeyMachine {
         }
     }
 
-    // A press that became a drag: silent, and only before recording.
-    mutating func pointerCancel() {
+    // A press that became a drag: silent; it ends an armed session or a hold recording the press started.
+    mutating func pointerCancel() -> HotkeyOutput {
+        let cancelsRecording = pointerRecordingCancellable
         pointerHeld = false
         pointerTapStart = nil
+        pressArmed = false
         if case .armed = phase, trigger == .pointer { phase = .idle }
+        guard cancelsRecording else { return HotkeyOutput() }
+        phase = .idle
+        return HotkeyOutput(action: .cancel)
     }
 
     mutating func otherInput(at t: TimeInterval) -> HotkeyOutput {
@@ -503,14 +518,41 @@ func runSelfTest() -> Int32 {
 
     m = HotkeyMachine()
     _ = m.pointerDown(at: 0)
-    m.pointerCancel()
+    _ = m.pointerCancel()
     check("pointer: drag cancels an armed press silently", m.phase == .idle && m.tick(at: 0.3) == none)
     check("pointer: release after a drag yields nothing", m.pointerUp(at: 0.5) == none && m.phase == .idle)
     check("pointer: press after a drag arms again", m.pointerDown(at: 1).deadline == 1 + arm)
     m = HotkeyMachine()
     _ = m.optionDown(.right, bare: true, at: 0)
-    m.pointerCancel()
+    _ = m.pointerCancel()
     check("pointer: cancel leaves a key session armed", m.phase == .armed(0))
+    check("pointer: cancel of a key session yields nothing", m.pointerCancel() == none)
+    m = HotkeyMachine()
+    _ = m.pointerDown(at: 0)
+    check("pointer drag: cancel of an armed press yields no action", m.pointerCancel() == none && m.phase == .idle)
+    m = HotkeyMachine()
+    _ = m.pointerDown(at: 0); _ = m.tick(at: 0.3)
+    check("pointer drag: own hold recording is cancellable", m.pointerRecordingCancellable)
+    check("pointer drag: cancels it silently", m.pointerCancel() == HotkeyOutput(action: .cancel) && m.phase == .idle)
+    check("pointer drag: stale tick after the cancel yields nothing", m.tick(at: 0.3 + HotkeyMachine.maxSeconds) == none)
+    m.finished()
+    check("pointer drag: the later release yields nothing", m.pointerUp(at: 1) == none && m.phase == .idle)
+    check("pointer drag: a fresh press arms again", m.pointerDown(at: 2) == HotkeyOutput(deadline: 2 + arm))
+    m = HotkeyMachine()
+    _ = m.pointerDown(at: 0); _ = m.tick(at: 0.3); _ = m.pointerDown(at: 1)
+    check("pointer drag: a recording from a lost-release press is not cancellable", !m.pointerRecordingCancellable
+          && m.pointerCancel() == none && m.phase == .recording(0.3))
+    m = HotkeyMachine()
+    _ = m.optionDown(.right, bare: true, at: 0); _ = m.tick(at: 0.3); _ = m.pointerDown(at: 1)
+    check("pointer drag: a key recording is not cancellable", !m.pointerRecordingCancellable
+          && m.pointerCancel() == none && m.phase == .recording(0.3))
+    m = HotkeyMachine(mode: .tap)
+    _ = m.pointerDown(at: 0); _ = m.pointerUp(at: 0.1); _ = m.pointerDown(at: 1)
+    check("pointer drag: a tap stop click is not cancellable", !m.pointerRecordingCancellable
+          && m.pointerCancel() == none && m.phase == .recording(0.1))
+    m = HotkeyMachine()
+    _ = m.pointerDown(at: 0); _ = m.tick(at: 0.3); _ = m.pointerUp(at: 1)
+    check("pointer drag: busy after release is not cancellable", !m.pointerRecordingCancellable && m.phase == .busy)
 
     m = HotkeyMachine(mode: .tap)
     _ = m.pointerDown(at: 0)
@@ -520,7 +562,7 @@ func runSelfTest() -> Int32 {
     m = HotkeyMachine(mode: .tap)
     _ = m.pointerDown(at: 0)
     check("pointer tap: long press is not a click", m.pointerUp(at: 0.5) == none && m.phase == .idle)
-    _ = m.pointerDown(at: 1); m.pointerCancel()
+    _ = m.pointerDown(at: 1); _ = m.pointerCancel()
     check("pointer tap: drag is not a click", m.pointerUp(at: 1.1) == none && m.phase == .idle)
     _ = m.pointerDown(at: 2); _ = m.pointerUp(at: 2.1)
     check("pointer tap: cap stops and sends", m.tick(at: 2.1 + HotkeyMachine.maxSeconds).action == .stopAndSend)
@@ -868,7 +910,7 @@ let keyCheckInterval: TimeInterval = 1
 let transcribeTimeout: TimeInterval = 120
 let healthTimeout: TimeInterval = 2
 
-enum DefaultsKey: String { case mode, side, autoSubmit, muteKokoro, showOrb, orbOrigin, character }
+enum DefaultsKey: String { case mode, side, autoSubmit, muteKokoro, showOrb, orbOrigin, character, animateIdle }
 enum Cue: String, CaseIterable { case start = "Tink", sent = "Pop", nothingHeard = "Purr", error = "Basso" }
 enum Health { case ready, needsAccessibility, hotkeyUnavailable, micPending, micDenied, serverDown }
 
@@ -960,8 +1002,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var shown = ""
     var sounds: [Cue: NSSound] = [:]
     var orb: OrbWindow?
-    // Persists until the next session's start cue.
+    // Cleared by the next start cue, or by its decay.
     var orbOutcome = OrbOutcome.none
+    var outcomeDecay = OutcomeDecay()
     let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
         c.urlCache = nil
@@ -990,7 +1033,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         defaults.register(defaults: [DefaultsKey.mode.rawValue: ModeSetting.hold.rawValue,
                                      DefaultsKey.side.rawValue: SideSetting.right.rawValue,
                                      DefaultsKey.autoSubmit.rawValue: false, DefaultsKey.muteKokoro.rawValue: true,
-                                     DefaultsKey.showOrb.rawValue: true])
+                                     DefaultsKey.showOrb.rawValue: true, DefaultsKey.animateIdle.rawValue: true])
         machine = HotkeyMachine(mode: mode, side: side)
         mute.release()
         for cue in Cue.allCases { sounds[cue] = NSSound(named: cue.rawValue) }
@@ -1003,8 +1046,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let orb = OrbWindow(defaults: defaults, menu: menu)
         orb.onPress = { [weak self] in self?.orbPressed() }
         orb.onRelease = { [weak self] in self?.orbReleased() }
-        orb.onDrag = { [weak self] in self?.machine.pointerCancel() }
+        orb.onDrag = { [weak self] in
+            guard let self = self else { return }
+            self.feed(self.machine.pointerCancel())
+        }
         orb.isRecording = { [weak self] in self?.machine.isRecording ?? false }
+        orb.canCancelRecording = { [weak self] in self?.machine.pointerRecordingCancellable ?? false }
         self.orb = orb
         orb.setShown(defaults.bool(forKey: DefaultsKey.showOrb.rawValue))
 
@@ -1321,6 +1368,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Also sets the orb's outcome, so this must stay ahead of any early return.
     func play(_ cue: Cue) {
         orbOutcome = OrbOutcome(cue)
+        let generation = outcomeDecay.next()
+        if orbOutcome != .none {
+            DispatchQueue.main.asyncAfter(deadline: .now() + OutcomeDecay.seconds) { [weak self] in
+                guard let self = self, self.outcomeDecay.isCurrent(generation) else { return }
+                self.orbOutcome = .none
+                self.updateOrb(self.health)
+            }
+        }
         updateOrb(health)
         guard let sound = sounds[cue] else { return }
         sound.stop()
@@ -1430,6 +1485,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A hidden orb has nothing to redraw.
         character.isEnabled = defaults.bool(forKey: DefaultsKey.showOrb.rawValue)
         menu.addItem(character)
+        let animate = add(menu, "Animate when idle", #selector(toggleDefault(_:)),
+                          on: defaults.bool(forKey: DefaultsKey.animateIdle.rawValue), rep: DefaultsKey.animateIdle.rawValue)
+        animate.isEnabled = character.isEnabled
         let loginStatus = SMAppService.mainApp.status
         let login = add(menu, loginStatus == .requiresApproval ? "Open at Login (approve in System Settings)" : "Open at Login",
                         #selector(toggleLogin(_:)), on: loginStatus == .enabled, rep: "")
@@ -1478,6 +1536,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func toggleDefault(_ sender: NSMenuItem) {
         guard let key = (sender.representedObject as? String).flatMap(DefaultsKey.init(rawValue:)) else { return }
         defaults.set(!defaults.bool(forKey: key.rawValue), forKey: key.rawValue)
+        if key == .animateIdle { updateOrb(health) }
         guard key == .showOrb else { return }
         let visible = defaults.bool(forKey: key.rawValue)
         // A hidden orb could not end its own session: the key ignores it.

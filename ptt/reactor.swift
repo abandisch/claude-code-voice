@@ -45,6 +45,7 @@ final class ArcReactor: PetCharacter {
     private var palette = ArcReactor.cyan
     private var look: OrbLook?
     private var reduceMotion = false
+    var animatesWhenIdle = true { didSet { if animatesWhenIdle != oldValue { look = nil } } }
     private var shownLevel: CGFloat?
 
     private static func cg(_ c: RGB, _ alpha: CGFloat) -> CGColor { CGColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: alpha) }
@@ -194,15 +195,17 @@ final class ArcReactor: PetCharacter {
             chaser.add(steps, forKey: "chase")
             spin(outer, "counterSpin", period: 5, clockwise: false, from: angles[1])
         case .error:
-            spin(segments, "spin", period: 40, clockwise: true, from: angles[0])
-            spin(outer, "counterSpin", period: 60, clockwise: false, from: angles[1])
+            guard animatesWhenIdle else { break }
+            spin(segments, "spin", period: 40, clockwise: true, from: angles[0], capped: true)
+            spin(outer, "counterSpin", period: 60, clockwise: false, from: angles[1], capped: true)
         case .needsPermission: break
         }
     }
 
     private func idle(_ angles: [Double]) {
-        spin(segments, "spin", period: 20, clockwise: true, from: angles[0])
-        spin(outer, "counterSpin", period: 30, clockwise: false, from: angles[1])
+        guard animatesWhenIdle else { return }
+        spin(segments, "spin", period: 20, clockwise: true, from: angles[0], capped: true)
+        spin(outer, "counterSpin", period: 30, clockwise: false, from: angles[1], capped: true)
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0.75
         fade.toValue = 1.0
@@ -217,16 +220,18 @@ final class ArcReactor: PetCharacter {
         group.autoreverses = true
         group.repeatCount = .infinity
         group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        capIdleFrameRate(group)
         heart.add(group, forKey: "pulse")
     }
 
     // These layers are not flipped: a negative angle turns clockwise on screen.
-    private func spin(_ layer: CALayer, _ key: String, period: CFTimeInterval, clockwise: Bool, from angle: Double) {
+    private func spin(_ layer: CALayer, _ key: String, period: CFTimeInterval, clockwise: Bool, from angle: Double, capped: Bool = false) {
         let a = CABasicAnimation(keyPath: "transform.rotation.z")
         a.fromValue = angle
         a.toValue = angle + (clockwise ? -2 : 2) * Double.pi
         a.duration = period
         a.repeatCount = .infinity
+        if capped { capIdleFrameRate(a) }
         layer.add(a, forKey: key)
     }
 
@@ -388,6 +393,77 @@ func runReactorSelfTest(_ check: (String, Bool) -> Void) {
     reactor.apply(.idle, level: 0, reduceMotion: true)
     check("reactor: Reduce Motion and leaving transcribing leave the ring where it was",
           abs(rotation(reactor.segments) - 0.7) < 0.05 && rotation(reactor.chaser) == rotation(reactor.segments))
+
+    func capped(_ a: CAAnimation?) -> Bool { a?.preferredFrameRateRange == petIdleFrameRate }
+    func cappedGroup(_ a: CAAnimation?) -> Bool {
+        let children = (a as? CAAnimationGroup)?.animations ?? []
+        return capped(a) && children.count == 2 && children.allSatisfy(capped)
+    }
+    func uncapped(_ a: CAAnimation?) -> Bool {
+        guard let a = a else { return false }
+        return ([a] + ((a as? CAAnimationGroup)?.animations ?? [])).allSatisfy { $0.preferredFrameRateRange == .default }
+    }
+    func spinsCapped() -> Bool {
+        capped(reactor.segments.animation(forKey: "spin")) && capped(reactor.outer.animation(forKey: "counterSpin"))
+    }
+    for look in [OrbLook.idle, .sent, .nothingHeard] {
+        reactor.apply(look, level: 0, reduceMotion: false)
+        check("idle rate: reactor \(look) spins and pulse are capped, the pulse's parts too",
+              spinsCapped() && cappedGroup(reactor.heart.animation(forKey: "pulse")))
+    }
+    reactor.apply(.error, level: 0, reduceMotion: false)
+    check("idle rate: reactor error spins are capped", spinsCapped() && named() == ["spin", "counterSpin"])
+    reactor.apply(.sent, level: 0, reduceMotion: false)
+    let rippled = reactor.wave.animation(forKey: "wave")
+    reactor.apply(.nothingHeard, level: 0, reduceMotion: false)
+    check("idle rate: reactor wave and dim run at the display's rate", uncapped(rippled) && uncapped(reactor.stage.animation(forKey: "dim")))
+    reactor.apply(.listening, level: 0, reduceMotion: false)
+    check("idle rate: reactor listening spins run at the display's rate",
+          uncapped(reactor.segments.animation(forKey: "spin")) && uncapped(reactor.outer.animation(forKey: "counterSpin")))
+    reactor.apply(.transcribing, level: 0, reduceMotion: false)
+    check("idle rate: reactor chase and transcribing counter-spin run at the display's rate",
+          uncapped(reactor.chaser.animation(forKey: "chase")) && uncapped(reactor.outer.animation(forKey: "counterSpin")))
+
+    func keyset() -> Set<String> { Set(layers(root).flatMap { $0.animationKeys() ?? [] }) }
+    reactor.apply(.idle, level: 0, reduceMotion: false)
+    reactor.animatesWhenIdle = false
+    reactor.apply(.idle, level: 0, reduceMotion: false)
+    check("animate when idle: turning it off restyles the same look, reactor idle is still", keyset().isEmpty)
+    reactor.apply(.sent, level: 0, reduceMotion: false)
+    check("animate when idle: off, reactor sent only ripples", keyset() == ["wave"])
+    reactor.apply(.nothingHeard, level: 0, reduceMotion: false)
+    check("animate when idle: off, reactor nothing heard only dims", keyset() == ["dim"])
+    reactor.apply(.error, level: 0, reduceMotion: false)
+    check("animate when idle: off, reactor error is still", keyset().isEmpty)
+    reactor.apply(.listening, level: 0, reduceMotion: false)
+    check("animate when idle: off, reactor listening still spins at the display's rate", keyset() == ["spin", "counterSpin"]
+          && uncapped(reactor.segments.animation(forKey: "spin")) && uncapped(reactor.outer.animation(forKey: "counterSpin")))
+    reactor.apply(.transcribing, level: 0, reduceMotion: false)
+    check("animate when idle: off, reactor transcribing still chases and counter-spins", keyset() == ["chase", "counterSpin"]
+          && uncapped(reactor.chaser.animation(forKey: "chase")) && uncapped(reactor.outer.animation(forKey: "counterSpin")))
+    reactor.apply(.idle, level: 0, reduceMotion: false)
+    let offIdle = keyset().isEmpty
+    reactor.animatesWhenIdle = true
+    reactor.apply(.idle, level: 0, reduceMotion: false)
+    check("animate when idle: turning it back on restyles the same look, reactor idle spins and pulses, capped",
+          offIdle && keyset() == ["spin", "counterSpin", "pulse"] && spinsCapped() && cappedGroup(reactor.heart.animation(forKey: "pulse")))
+    check("animate when idle: Reduce Motion stills every reactor look either way", [false, true].allSatisfy { on in
+        reactor.animatesWhenIdle = on
+        return allLooks.allSatisfy { look in
+            reactor.apply(look, level: 1, reduceMotion: true)
+            return keyset().isEmpty
+        }
+    })
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    reactor.segments.transform = CATransform3DMakeRotation(0.7, 0, 0, 1)
+    reactor.outer.transform = CATransform3DMakeRotation(-0.4, 0, 0, 1)
+    CATransaction.commit()
+    reactor.animatesWhenIdle = false
+    reactor.apply(.idle, level: 0, reduceMotion: false)
+    check("animate when idle: off, reactor idle leaves the rings at their angle",
+          abs(rotation(reactor.segments) - 0.7) < 0.05 && abs(rotation(reactor.outer) + 0.4) < 0.05)
+    reactor.animatesWhenIdle = true
 
     // Model geometry against the circle itself, corner radii, shadows and stroke widths included; rendered pixels are not testable headless.
     func paints(_ l: CALayer) -> Bool {

@@ -47,10 +47,11 @@ and reopen Pardon.
 (the hotkey state machine, key decoding, WAV header, transcript sanitising, response
 parsing, the reply size cap, the focus check, the paste key lookup, the mute flag, the
 orb as a trigger (handover with the key, lost releases, which clicks count), and the
-orb's gesture, hit test, placement, saved position, looks, animations, voice level and
-level smoothing, and the characters (the registry, the saved choice, the arc reactor's
-ring geometry and animations, and that it draws nothing outside its circle); no GUI,
-microphone or network, and it touches only a temporary directory). Also
+orb's gesture and its drag grace for a recording, hit test, placement, saved position,
+looks and how long an outcome shows, animations, the idle frame rate and the Animate when
+idle toggle, voice level and level smoothing, and the characters (the registry, the saved
+choice, the arc reactor's ring geometry and animations, and that it draws nothing outside
+its circle); no GUI, microphone or network, and it touches only a temporary directory). Also
 `make stop-ptt` and `make clean-ptt` (stops the app and removes `ptt/build` and the
 installed app; not the certificate or the entries in System Settings).
 
@@ -111,9 +112,13 @@ transcript is meant for.
   send). While one of the orb or the Option key is recording, the other is ignored; in tap
   mode the key cannot stop a recording the orb started, and the orb cannot stop one the
   key started.
-- **Drag** it to move it: start moving within a quarter of a second. A press that moves
-  more than a few points before recording has started becomes a drag and records nothing;
-  press and pause and a recording starts, and the orb will not move until you release.
+- **Drag** it to move it. Before a recording starts, a press that moves more than a few
+  points becomes a drag and records nothing. Once a hold-mode recording started by this
+  press is running, moving more than 10 points from where you pressed within 1.5 seconds of
+  pressing cancels it silently (nothing is sent) and drags the orb; after that, or for a
+  smaller move, the movement is ignored and releasing sends. In tap mode the stop click
+  never drags, and a recording started with the Option key is not affected by dragging the
+  orb.
 - It stays where you drop it, on that display, and is pulled back on screen at launch and
   when displays change; it returns to its place when an unplugged display comes back. To
   reset its position: `defaults delete io.github.abandisch.pardon orbOrigin`, then
@@ -126,6 +131,12 @@ transcript is meant for.
   and does not interrupt a recording. The submenu is greyed out while the orb is hidden.
   The choice is remembered across launches; to reset it to the default:
   `defaults delete io.github.abandisch.pardon character`.
+- **Animate when idle** in the menu, just below Pet (on by default; greyed out while the
+  orb is hidden), turns the repeating motion of the ready, pasted, nothing heard and error
+  looks on or off. Off, those looks hold still, but the one-off effects still play (the
+  ripple or flash after a paste, the dim after nothing heard), listening and transcribing
+  still move, and Reduce Motion overrides it. On, the idle animation runs at 30 frames a
+  second to keep the window server's work low.
 - Without Accessibility it stays grey and pressing it does nothing (the paste could not
   be posted anyway).
 
@@ -138,7 +149,7 @@ The arc reactor: a white-hot core inside cyan rings, on a dark disc.
 | Three lit blocks stepping clockwise round the segment ring, a lap every 1.2 s | Transcribing |
 | One ring rippling out from the core | Pasted |
 | Brief dim | Nothing heard |
-| Amber-red, turning slowly | The last attempt failed, or the speech server is not running |
+| Amber-red, turning slowly | The last attempt failed (back to normal after about ten seconds; the menu's status line still says it failed), or the speech server is not running |
 | Grey, dimmer, still | A permission is missing (Accessibility or microphone) or the hotkey is unavailable |
 
 The blue Orb character:
@@ -150,8 +161,11 @@ The blue Orb character:
 | Swirling shimmer | Transcribing |
 | One quick flash | Pasted |
 | Soft fade | Nothing heard |
-| Amber-red | The last attempt failed, or the speech server is not running |
+| Amber-red | The last attempt failed (back to normal after about ten seconds; the menu's status line still says it failed), or the speech server is not running |
 | Grey, still | A permission is missing (Accessibility or microphone) or the hotkey is unavailable |
+
+With **Animate when idle** off, the turning, pulsing and breathing of the ready, pasted,
+nothing heard and error looks stop.
 
 With Reduce Motion on (System Settings → Accessibility → Display) every look is still: no
 turning, breathing, pulsing, chase, swirl, ripple, flash or fade. VoiceOver reads it as a
@@ -178,7 +192,7 @@ steady, larger, whiter core and a brighter segment ring.
 
 ## Every ingredient
 
-- Four Swift files, ~2700 lines of our own code: `ptt/ptt.swift` (the app),
+- Four Swift files, ~3000 lines of our own code: `ptt/ptt.swift` (the app),
   `ptt/pet.swift` (the orb and its blue character), `ptt/reactor.swift` (the arc reactor
   character), both drawn in code with no image files, and `ptt/main.swift` (the entry
   point).
