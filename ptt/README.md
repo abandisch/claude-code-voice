@@ -48,8 +48,9 @@ and reopen Pardon.
 parsing, the reply size cap, the focus check, the paste key lookup, the mute flag, the
 orb as a trigger (handover with the key, lost releases, which clicks count), and the
 orb's gesture, hit test, placement, saved position, looks, animations, voice level and
-level smoothing; no GUI, microphone or
-network, and it touches only a temporary directory). Also
+level smoothing, and the characters (the registry, the saved choice, the arc reactor's
+ring geometry and animations, and that it draws nothing outside its circle); no GUI,
+microphone or network, and it touches only a temporary directory). Also
 `make stop-ptt` and `make clean-ptt` (stops the app and removes `ptt/build` and the
 installed app; not the certificate or the entries in System Settings).
 
@@ -118,10 +119,29 @@ transcript is meant for.
   reset its position: `defaults delete io.github.abandisch.pardon orbOrigin`, then
   relaunch Pardon.
 - **Right-click** (or Control-click) opens the same menu as the menu bar icon.
-- **Show orb** in the menu hides or shows it (on by default). Hidden, it does nothing and
+- **Show pet** in the menu hides or shows it (on by default). Hidden, it does nothing and
   the microphone level is not measured, from the moment it is hidden.
+- **Pet** in the menu, just below Show pet, picks how it is drawn: **Arc reactor**
+  (the default) or the original blue **Orb**. The change is immediate, in the same place,
+  and does not interrupt a recording. The submenu is greyed out while the orb is hidden.
+  The choice is remembered across launches; to reset it to the default:
+  `defaults delete io.github.abandisch.pardon character`.
 - Without Accessibility it stays grey and pressing it does nothing (the paste could not
   be posted anyway).
+
+The arc reactor: a white-hot core inside cyan rings, on a dark disc.
+
+| Look | Meaning |
+| --- | --- |
+| Lit, segment ring turning slowly, core gently pulsing | Ready |
+| Rings spinning faster, core growing and whitening with your voice | Listening |
+| Three lit blocks stepping clockwise round the segment ring, a lap every 1.2 s | Transcribing |
+| One ring rippling out from the core | Pasted |
+| Brief dim | Nothing heard |
+| Amber-red, turning slowly | The last attempt failed, or the speech server is not running |
+| Grey, dimmer, still | A permission is missing (Accessibility or microphone) or the hotkey is unavailable |
+
+The blue Orb character:
 
 | Look | Meaning |
 | --- | --- |
@@ -134,8 +154,9 @@ transcript is meant for.
 | Grey, still | A permission is missing (Accessibility or microphone) or the hotkey is unavailable |
 
 With Reduce Motion on (System Settings → Accessibility → Display) every look is still: no
-breathing, pulsing, swirl, flash or fade. VoiceOver reads it as a button labelled with
-Pardon's status.
+turning, breathing, pulsing, chase, swirl, ripple, flash or fade. VoiceOver reads it as a
+button labelled with Pardon's status. Instead of motion, the arc reactor shows listening by a
+steady, larger, whiter core and a brighter segment ring.
 
 ## What it does and does not do
 
@@ -157,9 +178,10 @@ Pardon's status.
 
 ## Every ingredient
 
-- Three Swift files, ~2170 lines of our own code: `ptt/ptt.swift` (the app),
-  `ptt/pet.swift` (the orb, drawn in code; no image files) and `ptt/main.swift` (the
-  entry point).
+- Four Swift files, ~2700 lines of our own code: `ptt/ptt.swift` (the app),
+  `ptt/pet.swift` (the orb and its blue character), `ptt/reactor.swift` (the arc reactor
+  character), both drawn in code with no image files, and `ptt/main.swift` (the entry
+  point).
 - Apple system frameworks only: AppKit, AVFoundation, Carbon (keyboard layout lookup),
   CoreGraphics, QuartzCore (the orb's animation), ApplicationServices, ServiceManagement,
   Foundation. No third-party code, no package manager.
@@ -180,7 +202,7 @@ Pardon's status.
   this recurring.
 - **Microphone access denied**: System Settings → Privacy & Security → Microphone, then
   switch Pardon on.
-- **Orb not visible**: check **Show orb** in the menu; if it is on, reset its position with
+- **Orb not visible**: check **Show pet** in the menu; if it is on, reset its position with
   `defaults delete io.github.abandisch.pardon orbOrigin` and relaunch Pardon.
 - **Hotkey does nothing in a password field or in Terminal**: while a password field or
   Terminal's Secure Keyboard Entry is active, macOS may withhold key events from Pardon.

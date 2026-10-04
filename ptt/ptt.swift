@@ -1,6 +1,6 @@
 // Pardon: hold Option, speak, release; the transcript from the local STT container
 // (127.0.0.1:8881) is pasted into the focused window. Build with ptt/build.sh.
-// This file is the app's core; main.swift is the entry point and pet.swift the orb.
+// This file is the app's core; main.swift is the entry point, pet.swift the orb and reactor.swift its arc reactor.
 import AppKit
 import ApplicationServices
 import AVFoundation
@@ -868,7 +868,7 @@ let keyCheckInterval: TimeInterval = 1
 let transcribeTimeout: TimeInterval = 120
 let healthTimeout: TimeInterval = 2
 
-enum DefaultsKey: String { case mode, side, autoSubmit, muteKokoro, showOrb, orbOrigin }
+enum DefaultsKey: String { case mode, side, autoSubmit, muteKokoro, showOrb, orbOrigin, character }
 enum Cue: String, CaseIterable { case start = "Tink", sent = "Pop", nothingHeard = "Purr", error = "Basso" }
 enum Health { case ready, needsAccessibility, hotkeyUnavailable, micPending, micDenied, serverDown }
 
@@ -1417,8 +1417,19 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             on: defaults.bool(forKey: DefaultsKey.autoSubmit.rawValue), rep: DefaultsKey.autoSubmit.rawValue)
         add(menu, "Mute Kokoro while recording", #selector(toggleDefault(_:)),
             on: defaults.bool(forKey: DefaultsKey.muteKokoro.rawValue), rep: DefaultsKey.muteKokoro.rawValue)
-        add(menu, "Show orb", #selector(toggleDefault(_:)),
+        add(menu, "Show pet", #selector(toggleDefault(_:)),
             on: defaults.bool(forKey: DefaultsKey.showOrb.rawValue), rep: DefaultsKey.showOrb.rawValue)
+        let characters = NSMenu()
+        characters.autoenablesItems = false
+        let active = petCharacter(named: defaults.string(forKey: DefaultsKey.character.rawValue)).displayName
+        for c in petCharacters {
+            add(characters, c.displayName, #selector(setCharacter(_:)), on: c.displayName == active, rep: c.displayName)
+        }
+        let character = NSMenuItem(title: "Pet", action: nil, keyEquivalent: "")
+        character.submenu = characters
+        // A hidden orb has nothing to redraw.
+        character.isEnabled = defaults.bool(forKey: DefaultsKey.showOrb.rawValue)
+        menu.addItem(character)
         let loginStatus = SMAppService.mainApp.status
         let login = add(menu, loginStatus == .requiresApproval ? "Open at Login (approve in System Settings)" : "Open at Login",
                         #selector(toggleLogin(_:)), on: loginStatus == .enabled, rep: "")
@@ -1474,6 +1485,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         orb?.setShown(visible)
         syncLevelMeter()
         refreshUI()
+    }
+
+    // Only the drawing changes: a session in progress carries on.
+    @objc func setCharacter(_ sender: NSMenuItem) {
+        let name = sender.representedObject as? String
+        guard name != petCharacter(named: defaults.string(forKey: DefaultsKey.character.rawValue)).displayName else { return }
+        defaults.set(name, forKey: DefaultsKey.character.rawValue)
+        orb?.reloadCharacter()
     }
 
     @objc func toggleLogin(_ sender: NSMenuItem) {

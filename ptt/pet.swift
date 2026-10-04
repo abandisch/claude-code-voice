@@ -146,7 +146,13 @@ protocol PetCharacter: AnyObject {
     func apply(_ look: OrbLook, level: Double, reduceMotion: Bool)
 }
 
-let petCharacters: [PetCharacter.Type] = [Orb.self]
+let petCharacters: [PetCharacter.Type] = [Orb.self, ArcReactor.self]
+let defaultPetCharacter: PetCharacter.Type = ArcReactor.self
+
+// Nil or an unknown name, such as a removed character's, means the default.
+func petCharacter(named name: String?) -> PetCharacter.Type {
+    petCharacters.first { $0.displayName == name } ?? defaultPetCharacter
+}
 
 final class Orb: PetCharacter {
     static let displayName = "Orb"
@@ -369,7 +375,7 @@ final class OrbWindow {
                                                object: panel, queue: .main) { [weak self] _ in self?.matchBacking() }
     }
 
-    private var activeCharacter: PetCharacter.Type { petCharacters[0] }
+    private var activeCharacter: PetCharacter.Type { petCharacter(named: defaults.string(forKey: DefaultsKey.character.rawValue)) }
 
     // Hidden means ordered out with no animations; showing builds a fresh character.
     func setShown(_ on: Bool) {
@@ -388,6 +394,17 @@ final class OrbWindow {
             stopAnimations(view.layer)
             panel.orderOut(nil)
         }
+    }
+
+    // Same panel, place, look and session; only the layer tree is new, so it is not pressed.
+    func reloadCharacter() {
+        guard isShown else { return }
+        stopAnimations(view.layer)
+        let c = activeCharacter.init()
+        view.layer = c.makeLayer(size: view.bounds.size)
+        character = c
+        matchBacking()
+        render()
     }
 
     private func stopAnimations(_ layer: CALayer?) {
@@ -652,4 +669,18 @@ func runPetSelfTest(_ check: (String, Bool) -> Void) {
     check("motion: sent flashes once", parts.count == 4 && parts[3].animationKeys()?.contains("once") == true)
     orb.apply(.needsPermission, level: 0, reduceMotion: false)
     check("motion: needs permission is still", keys(root).isEmpty)
+
+    let names = petCharacters.map { $0.displayName }
+    check("characters: two, with unique names", names.count == 2 && Set(names).count == names.count)
+    check("characters: Arc reactor is registered second", names.last == "Arc reactor")
+    check("character: none saved means the Arc reactor", petCharacter(named: nil).displayName == "Arc reactor")
+    check("character: an unknown name means the Arc reactor", ["Clippy", "", "orb"].allSatisfy {
+        petCharacter(named: $0).displayName == "Arc reactor"
+    })
+    check("character: Orb", petCharacter(named: "Orb").displayName == "Orb")
+    check("character: Arc reactor", petCharacter(named: "Arc reactor").displayName == "Arc reactor")
+    check("character: the default is registered and is the Arc reactor", defaultPetCharacter.displayName == "Arc reactor"
+          && names.contains(defaultPetCharacter.displayName))
+
+    runReactorSelfTest(check)
 }
