@@ -124,3 +124,38 @@ lock-stt:
 
 clean-stt: stop-stt
 	docker rmi $(STT_IMAGE) 2>/dev/null || true
+
+# --- Push-to-talk: Pardon, the menu bar app (ptt/) ---
+PTT_APP ?= $(HOME)/Applications/Pardon.app
+# Refuse to rm -rf anything that is not an .app bundle path.
+PTT_APP_GUARD = case "$(PTT_APP)" in *?.app) ;; *) echo "PTT_APP must end in .app: $(PTT_APP)"; exit 1;; esac
+
+.PHONY: ptt test-ptt ptt-cert stop-ptt clean-ptt
+
+## Build Pardon, replace the installed copy in $(PTT_APP) and start it
+ptt:
+	@$(PTT_APP_GUARD)
+	./ptt/build.sh
+	@/usr/bin/pkill -x Pardon || true; \
+	for i in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/pgrep -x Pardon >/dev/null || break; sleep 0.5; done; \
+	if /usr/bin/pgrep -x Pardon >/dev/null; then echo "Pardon did not quit within 5 s; quit it from its menu and run make ptt again"; exit 1; fi
+	@mkdir -p "$$(dirname "$(PTT_APP)")" && rm -rf "$(PTT_APP)" && \
+	/usr/bin/ditto ptt/build/Pardon.app "$(PTT_APP)" && /usr/bin/open "$(PTT_APP)"
+	@echo "Pardon installed at $(PTT_APP); its mic icon is in the menu bar; grant Microphone and Accessibility when asked (see ptt/README.md)"
+
+## Compile Pardon unsigned into a temp dir and run its self-test (no GUI, mic or network)
+test-ptt:
+	@tmp=$$(mktemp -d -t pardon) || exit 1; trap 'rm -rf "$$tmp"' EXIT; \
+	BUILD_DIR="$$tmp" SIGN=0 ./ptt/build.sh && "$$tmp/Pardon.app/Contents/MacOS/Pardon" --self-test
+
+## One-time self-signed "Pardon" signing identity, so rebuilds keep their permissions
+ptt-cert:
+	./ptt/make-cert.sh
+
+stop-ptt:
+	@/usr/bin/pkill -x Pardon || true
+
+## Stop Pardon; remove ptt/build and the installed app (not the certificate or the macOS permission entries)
+clean-ptt: stop-ptt
+	@$(PTT_APP_GUARD)
+	rm -rf ptt/build "$(PTT_APP)"

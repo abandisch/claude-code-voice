@@ -1,0 +1,1083 @@
+// Pardon: hold Option, speak, release; the transcript from the local STT container
+// (127.0.0.1:8881) is pasted into the focused window. Build with ptt/build.sh.
+import AppKit
+import ApplicationServices
+import AVFoundation
+import CoreGraphics
+import Foundation
+import ServiceManagement
+
+// MARK: - Pure pieces (exercised by --self-test)
+
+enum OptionKey { case left, right }
+enum SideSetting: String, CaseIterable { case right, left, either }
+enum ModeSetting: String { case hold, tap }
+enum HotkeyAction: Equatable { case none, startRecording, stopAndSend, cancel }
+
+struct HotkeyOutput: Equatable {
+    var action: HotkeyAction = .none
+    var deadline: TimeInterval? = nil
+}
+
+struct HotkeyMachine {
+    static let armDelay: TimeInterval = 0.25
+    static let tapMax: TimeInterval = 0.4
+    // The server's limit is 120 s.
+    static let maxSeconds: TimeInterval = 118
+
+    enum Phase: Equatable { case idle, armed(TimeInterval), recording(TimeInterval), busy }
+
+    var mode: ModeSetting
+    var side: SideSetting
+    private(set) var phase: Phase = .idle
+    private var leftDown = false
+    private var rightDown = false
+    private var tapStart: TimeInterval?
+
+    init(mode: ModeSetting = .hold, side: SideSetting = .right) {
+        self.mode = mode
+        self.side = side
+    }
+
+    private func matches(_ key: OptionKey) -> Bool {
+        switch side {
+        case .either: return true
+        case .left: return key == .left
+        case .right: return key == .right
+        }
+    }
+
+    private var matchingHeld: Bool {
+        (leftDown && matches(.left)) || (rightDown && matches(.right))
+    }
+
+    private mutating func setHeld(_ key: OptionKey, _ down: Bool) {
+        if key == .left { leftDown = down } else { rightDown = down }
+    }
+
+    mutating func optionDown(_ key: OptionKey, bare: Bool, at t: TimeInterval) -> HotkeyOutput {
+        guard matches(key) else { return HotkeyOutput() }
+        let alreadyHeld = matchingHeld
+        setHeld(key, true)
+        guard !alreadyHeld, phase != .busy else { return HotkeyOutput() }
+        guard bare else { tapStart = nil; return HotkeyOutput() }
+        switch mode {
+        case .hold:
+            guard phase == .idle else { return HotkeyOutput() }
+            phase = .armed(t)
+            return HotkeyOutput(deadline: t + Self.armDelay)
+        case .tap:
+            tapStart = t
+            return HotkeyOutput()
+        }
+    }
+
+    mutating func optionUp(_ key: OptionKey, at t: TimeInterval) -> HotkeyOutput {
+        guard matches(key) else { return HotkeyOutput() }
+        setHeld(key, false)
+        guard !matchingHeld, phase != .busy else { return HotkeyOutput() }
+        switch mode {
+        case .hold:
+            switch phase {
+            case .armed: phase = .idle; return HotkeyOutput()
+            case .recording: phase = .busy; return HotkeyOutput(action: .stopAndSend)
+            default: return HotkeyOutput()
+            }
+        case .tap:
+            defer { tapStart = nil }
+            guard let start = tapStart, t - start <= Self.tapMax else { return HotkeyOutput() }
+            switch phase {
+            case .idle:
+                phase = .recording(t)
+                return HotkeyOutput(action: .startRecording, deadline: t + Self.maxSeconds)
+            case .recording:
+                phase = .busy
+                return HotkeyOutput(action: .stopAndSend)
+            default: return HotkeyOutput()
+            }
+        }
+    }
+
+    mutating func otherInput(at t: TimeInterval) -> HotkeyOutput {
+        tapStart = nil
+        guard mode == .hold else { return HotkeyOutput() }
+        switch phase {
+        case .armed: phase = .idle; return HotkeyOutput()
+        case .recording: phase = .idle; return HotkeyOutput(action: .cancel)
+        default: return HotkeyOutput()
+        }
+    }
+
+    mutating func tick(at t: TimeInterval) -> HotkeyOutput {
+        switch phase {
+        case .armed(let since):
+            guard t >= since + Self.armDelay else { return HotkeyOutput(deadline: since + Self.armDelay) }
+            phase = .recording(t)
+            return HotkeyOutput(action: .startRecording, deadline: t + Self.maxSeconds)
+        case .recording(let since):
+            guard t >= since + Self.maxSeconds else { return HotkeyOutput(deadline: since + Self.maxSeconds) }
+            phase = .busy
+            return HotkeyOutput(action: .stopAndSend)
+        default:
+            return HotkeyOutput()
+        }
+    }
+
+    // Held flags survive: a missed key-up would swallow the next press, so the shell resyncs
+    // them with releaseAll when Option is not physically down.
+    mutating func finished() {
+        phase = .idle
+        tapStart = nil
+    }
+
+    mutating func reset() {
+        phase = .idle
+        leftDown = false
+        rightDown = false
+        tapStart = nil
+    }
+
+    mutating func releaseAll(at t: TimeInterval) -> HotkeyOutput {
+        leftDown = false
+        rightDown = false
+        tapStart = nil
+        guard mode == .hold else { return HotkeyOutput() }
+        switch phase {
+        case .armed: phase = .idle; return HotkeyOutput()
+        case .recording: phase = .busy; return HotkeyOutput(action: .stopAndSend)
+        default: return HotkeyOutput()
+        }
+    }
+}
+
+let leftOptionKeyCode: Int64 = 58
+let rightOptionKeyCode: Int64 = 61
+// Device-dependent bits NX_DEVICELALTKEYMASK / NX_DEVICERALTKEYMASK; CGEventFlags has no per-side flag.
+let leftOptionDeviceBit: UInt64 = 0x20
+let rightOptionDeviceBit: UInt64 = 0x40
+
+func decodeOption(keyCode: Int64, flags: UInt64) -> (key: OptionKey, down: Bool, bare: Bool)? {
+    let key: OptionKey
+    switch keyCode {
+    case leftOptionKeyCode: key = .left
+    case rightOptionKeyCode: key = .right
+    default: return nil
+    }
+    let down = flags & (key == .left ? leftOptionDeviceBit : rightOptionDeviceBit) != 0
+    let bare = CGEventFlags(rawValue: flags).intersection([.maskCommand, .maskControl, .maskShift, .maskSecondaryFn]).isEmpty
+    return (key, down, bare)
+}
+
+let sampleRate = 16_000
+
+func wavData(samples: [Int16], sampleRate: Int) -> Data {
+    let dataBytes = samples.count * 2
+    var d = Data(capacity: 44 + dataBytes)
+    func u32(_ v: Int) { withUnsafeBytes(of: UInt32(v).littleEndian) { d.append(contentsOf: $0) } }
+    func u16(_ v: Int) { withUnsafeBytes(of: UInt16(v).littleEndian) { d.append(contentsOf: $0) } }
+    d.append(contentsOf: Array("RIFF".utf8)); u32(36 + dataBytes); d.append(contentsOf: Array("WAVE".utf8))
+    d.append(contentsOf: Array("fmt ".utf8)); u32(16)
+    u16(1); u16(1); u32(sampleRate); u32(sampleRate * 2); u16(2); u16(16)
+    d.append(contentsOf: Array("data".utf8)); u32(dataBytes)
+    samples.withUnsafeBufferPointer { buf in
+        for s in buf { withUnsafeBytes(of: s.littleEndian) { d.append(contentsOf: $0) } }
+    }
+    return d
+}
+
+func wordCount(_ s: String) -> Int {
+    s.split(whereSeparator: { $0.isWhitespace }).count
+}
+
+let maxTranscriptChars = 4000
+
+// Control, format and line/paragraph separators could act as keystrokes in the target window.
+func sanitise(_ s: String) -> String {
+    var scalars = String.UnicodeScalarView()
+    for u in s.unicodeScalars {
+        switch u.properties.generalCategory {
+        case .control, .format, .lineSeparator, .paragraphSeparator: scalars.append(" ")
+        default: scalars.append(u)
+        }
+    }
+    let collapsed = String(scalars).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    return String(collapsed.prefix(maxTranscriptChars)).trimmingCharacters(in: .whitespaces)
+}
+
+enum TranscribeResult: Equatable { case text(String), noSpeech, failed(String), timedOut, unreachable }
+
+func parseTranscription(status: Int, body: Data) -> TranscribeResult {
+    let obj = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+    guard status == 200 else { return .failed((obj?["error"] as? String) ?? "HTTP \(status)") }
+    guard let obj = obj, let text = obj["text"] as? String else { return .failed("malformed response") }
+    if (obj["no_speech"] as? Bool) == true { return .noSpeech }
+    let clean = sanitise(text)
+    return clean.isEmpty ? .noSpeech : .text(clean)
+}
+
+func transportResult(_ error: Error) -> TranscribeResult {
+    (error as? URLError)?.code == .timedOut ? .timedOut : .unreachable
+}
+
+// MARK: - Self-test
+
+// Headless: no GUI, microphone or network; touches only a temporary directory.
+func runSelfTest() -> Int32 {
+    var passed = 0, failed = 0
+    func check(_ name: String, _ ok: Bool) {
+        print("\(ok ? "ok  " : "FAIL") \(name)")
+        if ok { passed += 1 } else { failed += 1 }
+    }
+    let arm = HotkeyMachine.armDelay
+    let start = HotkeyOutput(action: .startRecording, deadline: 0.3 + HotkeyMachine.maxSeconds)
+    let none = HotkeyOutput()
+
+    check("constants: maxSeconds is 118", HotkeyMachine.maxSeconds == 118)
+    check("constants: armDelay is 0.25", HotkeyMachine.armDelay == 0.25)
+    check("constants: tapMax is 0.4", HotkeyMachine.tapMax == 0.4)
+    check("default side is right", HotkeyMachine().side == .right)
+
+    var m = HotkeyMachine()
+    check("hold: bare down arms with an armDelay deadline", m.optionDown(.right, bare: true, at: 0) == HotkeyOutput(deadline: arm))
+    check("hold: release before arm yields nothing", m.optionUp(.right, at: 0.2) == none)
+    check("hold: stale tick after early release yields nothing", m.tick(at: arm) == none && m.phase == .idle)
+
+    m = HotkeyMachine()
+    _ = m.optionDown(.right, bare: true, at: 0)
+    check("hold: early tick re-asks for the deadline", m.tick(at: 0.1) == HotkeyOutput(deadline: arm))
+    check("hold: tick past arm starts recording", m.tick(at: 0.3) == start)
+    check("hold: release while recording stops and sends", m.optionUp(.right, at: 2) == HotkeyOutput(action: .stopAndSend))
+    check("hold: busy ignores a new press", m.optionDown(.right, bare: true, at: 3) == none && m.phase == .busy)
+    check("hold: busy ignores release", m.optionUp(.right, at: 3.1) == none)
+    m.finished()
+    check("hold: finished() returns to idle", m.phase == .idle)
+    check("hold: next press after finished() arms again", m.optionDown(.right, bare: true, at: 4).deadline == 4 + arm)
+
+    m = HotkeyMachine()
+    _ = m.optionDown(.right, bare: true, at: 0)
+    check("hold: tick at exactly armDelay starts", m.tick(at: arm).action == .startRecording)
+
+    m = HotkeyMachine()
+    _ = m.optionDown(.right, bare: true, at: 0)
+    check("hold: chord before arm disarms silently", m.otherInput(at: 0.1) == none && m.phase == .idle)
+    check("hold: tick after chord yields nothing", m.tick(at: 0.3) == none)
+    check("hold: release after chord yields nothing", m.optionUp(.right, at: 0.5) == none)
+
+    m = HotkeyMachine()
+    _ = m.optionDown(.right, bare: true, at: 0); _ = m.tick(at: 0.3)
+    check("hold: key while recording cancels", m.otherInput(at: 1) == HotkeyOutput(action: .cancel))
+    check("hold: release after cancel does nothing", m.optionUp(.right, at: 1.5) == none && m.phase == .idle)
+
+    m = HotkeyMachine(mode: .hold, side: .left)
+    check("side left: right key ignored", m.optionDown(.right, bare: true, at: 0) == none && m.phase == .idle)
+    check("side left: left key arms", m.optionDown(.left, bare: true, at: 1).deadline == 1 + arm)
+    m = HotkeyMachine(mode: .hold, side: .right)
+    check("side right: left key ignored", m.optionDown(.left, bare: true, at: 0) == none && m.phase == .idle)
+    check("side right: right key arms", m.optionDown(.right, bare: true, at: 1).deadline == 1 + arm)
+
+    m = HotkeyMachine(side: .either)
+    _ = m.optionDown(.left, bare: true, at: 0); _ = m.tick(at: 0.3)
+    check("either: second key while recording does nothing", m.optionDown(.right, bare: true, at: 1) == none)
+    check("either: releasing one of two keeps recording", m.optionUp(.left, at: 2) == none && m.phase == .recording(0.3))
+    check("either: releasing the last stops and sends", m.optionUp(.right, at: 3) == HotkeyOutput(action: .stopAndSend))
+
+    m = HotkeyMachine()
+    check("hold: non-bare press ignored", m.optionDown(.right, bare: false, at: 0) == none && m.phase == .idle)
+    check("hold: tick after non-bare press yields nothing", m.tick(at: 0.5) == none)
+
+    m = HotkeyMachine(mode: .tap)
+    _ = m.optionDown(.right, bare: true, at: 0)
+    check("tap: quick tap starts recording", m.optionUp(.right, at: 0.3) == start)
+    _ = m.optionDown(.right, bare: true, at: 5)
+    check("tap: quick tap while recording stops and sends", m.optionUp(.right, at: 5.2) == HotkeyOutput(action: .stopAndSend))
+    check("tap: stop leaves busy", m.phase == .busy)
+    _ = m.optionDown(.right, bare: true, at: 6)
+    check("tap: tap while busy yields nothing", m.optionUp(.right, at: 6.1) == none && m.phase == .busy)
+    m = HotkeyMachine(mode: .tap)
+    _ = m.optionDown(.right, bare: true, at: 0)
+    check("tap: long hold is not a tap", m.optionUp(.right, at: 0.5) == none && m.phase == .idle)
+    _ = m.optionDown(.right, bare: true, at: 1); _ = m.otherInput(at: 1.1)
+    check("tap: chord is not a tap", m.optionUp(.right, at: 1.2) == none && m.phase == .idle)
+    _ = m.optionDown(.right, bare: false, at: 2)
+    check("tap: non-bare press is not a tap", m.optionUp(.right, at: 2.1) == none && m.phase == .idle)
+    _ = m.optionDown(.right, bare: true, at: 3); _ = m.optionUp(.right, at: 3.1)
+    check("tap: typing while recording does not cancel", m.otherInput(at: 4) == none && m.phase == .recording(3.1))
+    m = HotkeyMachine(mode: .tap)
+    _ = m.optionDown(.right, bare: true, at: 0)
+    check("tap: release at exactly tapMax is a tap", m.optionUp(.right, at: HotkeyMachine.tapMax).action == .startRecording)
+    m = HotkeyMachine(mode: .tap, side: .either)
+    _ = m.optionDown(.left, bare: true, at: 0); _ = m.optionDown(.right, bare: true, at: 0.05)
+    let firstUp = m.optionUp(.left, at: 0.1)
+    check("tap either: both keys tapped together start once",
+          firstUp == none && m.optionUp(.right, at: 0.15).action == .startRecording && m.phase == .recording(0.15))
+
+    m = HotkeyMachine(mode: .tap)
+    _ = m.optionDown(.right, bare: true, at: 0); _ = m.optionUp(.right, at: 0.1)
+    check("max: tick before the cap yields nothing new", m.tick(at: 60).action == .none)
+    check("max: tick at the cap stops and sends", m.tick(at: 0.1 + HotkeyMachine.maxSeconds) == HotkeyOutput(action: .stopAndSend))
+    check("max: tap cap leaves busy", m.phase == .busy)
+    _ = m.optionDown(.right, bare: true, at: 200)
+    check("max: tap after the tap cap yields nothing", m.optionUp(.right, at: 200.1) == none)
+    m = HotkeyMachine()
+    _ = m.optionDown(.right, bare: true, at: 0); _ = m.tick(at: 0.3)
+    check("max: hold mode cap stops and sends", m.tick(at: 0.3 + HotkeyMachine.maxSeconds).action == .stopAndSend)
+    check("max: hold cap leaves busy", m.phase == .busy)
+    check("max: release after the hold cap yields nothing", m.optionUp(.right, at: 200) == none && m.phase == .busy)
+
+    func resetLeavesIdle(_ mode: ModeSetting, _ prepare: (inout HotkeyMachine) -> Void) -> Bool {
+        var r = HotkeyMachine(mode: mode)
+        prepare(&r)
+        r.reset()
+        guard r.phase == .idle else { return false }
+        switch mode {
+        case .hold: return r.optionDown(.right, bare: true, at: 500) == HotkeyOutput(deadline: 500 + arm)
+        case .tap:
+            _ = r.optionDown(.right, bare: true, at: 500)
+            return r.optionUp(.right, at: 500.1).action == .startRecording
+        }
+    }
+    check("reset: from idle", resetLeavesIdle(.hold) { _ in })
+    check("reset: from armed", resetLeavesIdle(.hold) { _ = $0.optionDown(.right, bare: true, at: 0) })
+    check("reset: from recording (key still held)", resetLeavesIdle(.hold) {
+        _ = $0.optionDown(.right, bare: true, at: 0); _ = $0.tick(at: 0.3)
+    })
+    check("reset: from busy (key still held)", resetLeavesIdle(.hold) {
+        _ = $0.optionDown(.right, bare: true, at: 0); _ = $0.tick(at: 0.3); _ = $0.tick(at: 0.3 + HotkeyMachine.maxSeconds)
+    })
+    check("reset: tap mode from recording (key held)", resetLeavesIdle(.tap) {
+        _ = $0.optionDown(.right, bare: true, at: 0); _ = $0.optionUp(.right, at: 0.1); _ = $0.optionDown(.right, bare: true, at: 1)
+    })
+
+    m = HotkeyMachine()
+    _ = m.optionDown(.right, bare: true, at: 0)
+    check("releaseAll: hold armed disarms", m.releaseAll(at: 0.1) == none && m.phase == .idle)
+    check("releaseAll: tick after disarm yields nothing", m.tick(at: 0.3) == none)
+    m = HotkeyMachine()
+    _ = m.optionDown(.right, bare: true, at: 0); _ = m.tick(at: 0.3)
+    check("releaseAll: hold recording stops and sends", m.releaseAll(at: 1) == HotkeyOutput(action: .stopAndSend) && m.phase == .busy)
+    m.finished()
+    check("releaseAll: next press arms (no stale held flag)", m.optionDown(.right, bare: true, at: 2) == HotkeyOutput(deadline: 2 + arm))
+    m = HotkeyMachine(mode: .tap)
+    _ = m.optionDown(.right, bare: true, at: 0); _ = m.optionUp(.right, at: 0.1)
+    _ = m.optionDown(.right, bare: true, at: 1)
+    check("releaseAll: tap recording keeps recording", m.releaseAll(at: 1.1) == none && m.phase == .recording(0.1))
+    _ = m.optionDown(.right, bare: true, at: 2)
+    check("releaseAll: tap afterwards stops and sends", m.optionUp(.right, at: 2.1) == HotkeyOutput(action: .stopAndSend))
+
+    func decodes(_ code: Int64, _ flags: UInt64, _ key: OptionKey, _ down: Bool, _ bare: Bool) -> Bool {
+        guard let d = decodeOption(keyCode: code, flags: flags) else { return false }
+        return d.key == key && d.down == down && d.bare == bare
+    }
+    check("decode: left down", decodes(58, 0x80120, .left, true, true))
+    check("decode: right down", decodes(61, 0x80140, .right, true, true))
+    check("decode: left up", decodes(58, 0x100, .left, false, true))
+    check("decode: down with Shift is not bare", decodes(58, 0xA0122, .left, true, false))
+    check("decode: left up while right is held", decodes(58, 0x80140, .left, false, true))
+    check("decode: right up while left is held", decodes(61, 0x80120, .right, false, true))
+    check("decode: down with Command is not bare", decodes(58, 0x180120, .left, true, false))
+    check("decode: down with Control is not bare", decodes(58, 0xC0120, .left, true, false))
+    check("decode: down with Fn is not bare", decodes(58, 0x880120, .left, true, false))
+    check("decode: non-Option keycode is nil", decodeOption(keyCode: 56, flags: 0x20102) == nil)
+
+    let wav = wavData(samples: [0, 1, -1, 32767, -32768], sampleRate: sampleRate)
+    let expected: [UInt8] = [
+        0x52, 0x49, 0x46, 0x46, 46, 0, 0, 0, 0x57, 0x41, 0x56, 0x45,
+        0x66, 0x6D, 0x74, 0x20, 16, 0, 0, 0, 1, 0, 1, 0,
+        0x80, 0x3E, 0, 0, 0x00, 0x7D, 0, 0, 2, 0, 16, 0,
+        0x64, 0x61, 0x74, 0x61, 10, 0, 0, 0,
+        0, 0, 1, 0, 0xFF, 0xFF, 0xFF, 0x7F, 0x00, 0x80,
+    ]
+    check("wav: 44-byte header + data, exact bytes", Array(wav) == expected)
+    check("wav: empty sample array is a bare 44-byte header", wavData(samples: [], sampleRate: sampleRate).count == 44)
+
+    check("words: empty", wordCount("") == 0)
+    check("words: whitespace only", wordCount("  \n\t ") == 0)
+    check("words: extra whitespace", wordCount("  hello   there  ") == 2)
+    check("words: newlines and tabs", wordCount("one\ntwo\tthree\n") == 3)
+
+    check("sanitise: interior newline", sanitise("one\ntwo") == "one two")
+    check("sanitise: carriage return", sanitise("one\rtwo") == "one two")
+    check("sanitise: tab", sanitise("one\ttwo") == "one two")
+    check("sanitise: escape sequence", sanitise("a\u{1B}[201~b") == "a [201~b")
+    check("sanitise: U+2028", sanitise("one\u{2028}two") == "one two")
+    check("sanitise: U+202E", sanitise("one\u{202E}two") == "one two")
+    check("sanitise: capped at 4000", sanitise(String(repeating: "a", count: 5000)).count == 4000)
+    check("sanitise: plain text unchanged", sanitise("Hello there, sir.") == "Hello there, sir.")
+    check("sanitise: accents and apostrophes kept", sanitise("Café, naïve — it's Zoë’s") == "Café, naïve — it's Zoë’s")
+
+    func parse(_ status: Int, _ s: String) -> TranscribeResult { parseTranscription(status: status, body: Data(s.utf8)) }
+    check("parse: text", parse(200, #"{"text": " Hello there. ", "duration_s": 1.2, "no_speech": false}"#) == .text("Hello there."))
+    check("parse: text is sanitised", parse(200, #"{"text": "rm -rf x\ny", "no_speech": false}"#) == .text("rm -rf x y"))
+    check("parse: no_speech", parse(200, #"{"text": "", "duration_s": 1.0, "no_speech": true}"#) == .noSpeech)
+    check("parse: no_speech with text", parse(200, #"{"text": "x", "no_speech": true}"#) == .noSpeech)
+    check("parse: whitespace text", parse(200, #"{"text": "  \n ", "duration_s": 1.0, "no_speech": false}"#) == .noSpeech)
+    check("parse: error JSON", parse(413, #"{"error": "too large"}"#) == .failed("too large"))
+    check("parse: non-200 without JSON", parse(500, "oops") == .failed("HTTP 500"))
+    check("parse: 500 with text is failed", parse(500, #"{"text": "x", "no_speech": false}"#) == .failed("HTTP 500"))
+    check("parse: redirect is failed", parse(307, "") == .failed("HTTP 307"))
+    check("parse: garbage", parse(200, "not json") == .failed("malformed response"))
+    check("parse: 200 without text", parse(200, #"{"ok": true}"#) == .failed("malformed response"))
+    check("transport: timeout", transportResult(URLError(.timedOut)) == .timedOut)
+    check("transport: cannot connect", transportResult(URLError(.cannotConnectToHost)) == .unreachable)
+
+    let fm = FileManager.default
+    let tmp = ProcessInfo.processInfo.environment["TMPDIR"] ?? NSTemporaryDirectory()
+    let scratch = URL(fileURLWithPath: tmp).appendingPathComponent("pardon-selftest-\(UUID().uuidString)")
+    check("mute: temporary directory created", (try? fm.createDirectory(at: scratch, withIntermediateDirectories: false)) != nil)
+    let claude = scratch.appendingPathComponent("claude")
+    let mute = KokoroMute(claudeDir: claude)
+    mute.engage()
+    check("mute: no .claude directory, nothing created", !fm.fileExists(atPath: claude.path))
+    try? fm.createDirectory(at: claude, withIntermediateDirectories: false)
+    mute.engage()
+    check("mute: engage writes pardon", (try? Data(contentsOf: mute.file)) == KokoroMute.marker)
+    mute.release()
+    check("mute: release removes ours", !fm.fileExists(atPath: mute.file.path))
+    try? Data().write(to: mute.file)
+    mute.engage()
+    check("mute: a user's empty file is not overwritten", (try? Data(contentsOf: mute.file)) == Data())
+    mute.release()
+    check("mute: a user's empty file is not removed", fm.fileExists(atPath: mute.file.path))
+    try? Data("pardon\n".utf8).write(to: mute.file)
+    mute.release()
+    check("mute: pardon plus newline is not removed", fm.fileExists(atPath: mute.file.path))
+    try? fm.removeItem(at: scratch)
+    check("mute: temporary directory removed", !fm.fileExists(atPath: scratch.path))
+
+    print("self-test: \(passed) passed, \(failed) failed")
+    return failed == 0 ? 0 : 1
+}
+
+// MARK: - Audio capture
+
+final class Recorder {
+    let engine = AVAudioEngine()
+    private let lock = NSLock()
+    private var samples: [Int16] = []
+    private var running = false
+    private let outFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(sampleRate), channels: 1, interleaved: true)!
+
+    func prepare() {
+        _ = engine.inputNode
+        engine.prepare()
+    }
+
+    func start() -> Bool {
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0,
+              let converter = AVAudioConverter(from: format, to: outFormat) else { return false }
+        lock.lock(); samples = []; lock.unlock()
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
+            self?.append(buffer, converter)
+        }
+        do { try engine.start() } catch { input.removeTap(onBus: 0); return false }
+        running = true
+        return true
+    }
+
+    private func append(_ buffer: AVAudioPCMBuffer, _ converter: AVAudioConverter) {
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * outFormat.sampleRate / buffer.format.sampleRate) + 64
+        guard let out = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else { return }
+        var fed = false
+        var error: NSError?
+        let status = converter.convert(to: out, error: &error) { _, inputStatus in
+            if fed { inputStatus.pointee = .noDataNow; return nil }
+            fed = true
+            inputStatus.pointee = .haveData
+            return buffer
+        }
+        guard status != .error, let channel = out.int16ChannelData else { return }
+        lock.lock()
+        samples.append(contentsOf: UnsafeBufferPointer(start: channel[0], count: Int(out.frameLength)))
+        lock.unlock()
+    }
+
+    func stop() -> [Int16] {
+        if running {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+            running = false
+            engine.prepare()
+        }
+        lock.lock(); defer { samples = []; lock.unlock() }
+        return samples
+    }
+}
+
+// MARK: - Kokoro mute flag
+
+struct KokoroMute {
+    static let marker = Data("pardon".utf8)
+    let claudeDir: URL
+    var file: URL { claudeDir.appendingPathComponent("hooks/mute") }
+
+    init(claudeDir: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")) {
+        self.claudeDir = claudeDir
+    }
+
+    func engage() {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: file.path), fm.fileExists(atPath: claudeDir.path) else { return }
+        try? fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: false)
+        try? Self.marker.write(to: file, options: .withoutOverwriting)
+    }
+
+    // A user's own mute (make mute: an empty file) is never ours to remove.
+    func release() {
+        guard (try? FileManager.default.attributesOfItem(atPath: file.path))?[.type] as? FileAttributeType == .typeRegular,
+              let handle = try? FileHandle(forReadingFrom: file) else { return }
+        let head = try? handle.read(upToCount: 16)
+        try? handle.close()
+        if head == Self.marker { try? FileManager.default.removeItem(at: file) }
+    }
+}
+
+// MARK: - App
+
+let serverURL = URL(string: "http://127.0.0.1:8881")!
+let bundleID = "io.github.abandisch.pardon"
+// "PARD": our own synthetic events carry it and the tap ignores them.
+let pardonEventTag: Int64 = 0x5041_5244
+// ANSI "V" position; a non-QWERTY layout would need a lookup.
+let pasteKeyCode: CGKeyCode = 9
+let returnKeyCode: CGKeyCode = 36
+let pasteDelay: TimeInterval = 0.1
+let returnDelay: TimeInterval = 0.15
+// Target apps read the pasteboard asynchronously after Cmd-V.
+let restoreDelay: TimeInterval = 1.0
+let healthInterval: TimeInterval = 10
+let permissionInterval: TimeInterval = 2
+let keyCheckInterval: TimeInterval = 1
+let transcribeTimeout: TimeInterval = 120
+let healthTimeout: TimeInterval = 2
+
+enum DefaultsKey: String { case mode, side, autoSubmit, muteKokoro }
+enum Cue: String, CaseIterable { case start = "Tink", sent = "Pop", nothingHeard = "Purr", error = "Basso" }
+enum Health { case ready, needsAccessibility, hotkeyUnavailable, micPending, micDenied, serverDown }
+
+func now() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
+
+final class RedirectRefuser: NSObject, URLSessionTaskDelegate {
+    // A 3xx then surfaces as a failed response; the audio is never re-sent elsewhere.
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+// Every path that leaves recording or busy ends in endSession() or abortSession().
+final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    enum UIState { case idle, listening, transcribing }
+
+    let defaults = UserDefaults.standard
+    let recorder = Recorder()
+    let mute = KokoroMute()
+    var machine = HotkeyMachine()
+    var uiState = UIState.idle
+    var serverUp: Bool?
+    var lastError: String?
+    var lastTranscript: String?
+    var sessionID = 0
+    var keyCheck: Timer?
+    var tap: CFMachPort?
+    var tapSource: CFRunLoopSource?
+    var statusItem: NSStatusItem!
+    var statusLine: NSMenuItem?
+    var shown = ""
+    var sounds: [Cue: NSSound] = [:]
+    let session: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.urlCache = nil
+        c.httpCookieStorage = nil
+        c.httpShouldSetCookies = false
+        c.urlCredentialStorage = nil
+        // Audio must not be routed through a system proxy.
+        c.connectionProxyDictionary = [:]
+        c.waitsForConnectivity = false
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        c.timeoutIntervalForRequest = transcribeTimeout
+        c.timeoutIntervalForResource = 150
+        return URLSession(configuration: c, delegate: RedirectRefuser(), delegateQueue: nil)
+    }()
+
+    var mode: ModeSetting { ModeSetting(rawValue: defaults.string(forKey: DefaultsKey.mode.rawValue) ?? "") ?? .hold }
+    var side: SideSetting { SideSetting(rawValue: defaults.string(forKey: DefaultsKey.side.rawValue) ?? "") ?? .right }
+    var micAuthorized: Bool { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
+    var optionPhysicallyDown: Bool { CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate) }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        defaults.register(defaults: [DefaultsKey.mode.rawValue: ModeSetting.hold.rawValue,
+                                     DefaultsKey.side.rawValue: SideSetting.right.rawValue,
+                                     DefaultsKey.autoSubmit.rawValue: false, DefaultsKey.muteKokoro.rawValue: true])
+        machine = HotkeyMachine(mode: mode, side: side)
+        mute.release()
+        for cue in Cue.allCases { sounds[cue] = NSSound(named: cue.rawValue) }
+
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.delegate = self
+        statusItem.menu = menu
+
+        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: recorder.engine,
+                                               queue: .main) { [weak self] _ in
+            guard let self = self, self.uiState == .listening else { return }
+            self.cancelRecording(error: "Audio device changed")
+        }
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification,
+                     NSWorkspace.sessionDidResignActiveNotification] {
+            workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.abortSession() }
+        }
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.apple.screenIsLocked"),
+                                                            object: nil, queue: .main) { [weak self] _ in
+            self?.abortSession()
+        }
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: recorder.prepare()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                DispatchQueue.main.async {
+                    if granted { self.recorder.prepare() }
+                    self.refreshUI()
+                }
+            }
+        default: break
+        }
+        let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(prompt)
+
+        let permissionTimer = Timer.scheduledTimer(withTimeInterval: permissionInterval, repeats: true) { [weak self] _ in
+            self?.checkTap()
+        }
+        permissionTimer.tolerance = 0.5
+        let healthTimer = Timer.scheduledTimer(withTimeInterval: healthInterval, repeats: true) { [weak self] _ in
+            self?.checkHealth()
+        }
+        healthTimer.tolerance = 2
+        checkTap()
+        checkHealth()
+        refreshUI()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        mute.release()
+    }
+
+    // MARK: Event tap
+
+    func checkTap() {
+        if AXIsProcessTrusted() {
+            if let tap = tap {
+                if !CGEvent.tapIsEnabled(tap: tap) { CGEvent.tapEnable(tap: tap, enable: true) }
+            } else {
+                createTap()
+            }
+        } else if tap != nil {
+            removeTap()
+            abortSession()
+        }
+        refreshUI()
+    }
+
+    func createTap() {
+        let types: [CGEventType] = [.flagsChanged, .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]
+        let mask = types.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
+        // Must stay minimal, return the event unmodified, and never read characters.
+        let callback: CGEventTapCallBack = { _, type, event, refcon in
+            guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
+            let controller = Unmanaged<AppController>.fromOpaque(refcon).takeUnretainedValue()
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                if let tap = controller.tap { CGEvent.tapEnable(tap: tap, enable: true) }
+                DispatchQueue.main.async { controller.abortSession() }
+            } else if event.getIntegerValueField(.eventSourceUserData) != pardonEventTag {
+                let code = event.getIntegerValueField(.keyboardEventKeycode)
+                let flags = event.flags
+                let t = now()
+                DispatchQueue.main.async { controller.handle(type, code, flags, t) }
+            }
+            return Unmanaged.passUnretained(event)
+        }
+        guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+                                           eventsOfInterest: mask, callback: callback,
+                                           userInfo: Unmanaged.passUnretained(self).toOpaque()) else { return }
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: port, enable: true)
+        tap = port
+        tapSource = source
+    }
+
+    func removeTap() {
+        guard let port = tap else { return }
+        CGEvent.tapEnable(tap: port, enable: false)
+        if let source = tapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        CFMachPortInvalidate(port)
+        tap = nil
+        tapSource = nil
+    }
+
+    func handle(_ type: CGEventType, _ code: Int64, _ flags: CGEventFlags, _ t: TimeInterval) {
+        guard type == .flagsChanged, let option = decodeOption(keyCode: code, flags: flags.rawValue) else {
+            return feed(machine.otherInput(at: t))
+        }
+        feed(option.down ? machine.optionDown(option.key, bare: option.bare, at: t) : machine.optionUp(option.key, at: t))
+    }
+
+    // Stale ticks are safe only because tick re-checks the phase.
+    func feed(_ out: HotkeyOutput) {
+        if let deadline = out.deadline {
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline - now())) { [weak self] in
+                guard let self = self else { return }
+                if case .armed = self.machine.phase, !self.optionPhysicallyDown {
+                    return self.feed(self.machine.releaseAll(at: now()))
+                }
+                self.feed(self.machine.tick(at: now()))
+            }
+        }
+        switch out.action {
+        case .none: break
+        case .startRecording: startRecording()
+        case .stopAndSend: stopAndSend()
+        case .cancel: cancelRecording(error: nil)
+        }
+    }
+
+    // MARK: Session
+
+    func startRecording() {
+        sessionID += 1
+        guard micAuthorized else { return cancelRecording(error: "Microphone could not start") }
+        play(.start)
+        if defaults.bool(forKey: DefaultsKey.muteKokoro.rawValue) { mute.engage() }
+        guard recorder.start() else { return cancelRecording(error: "Microphone could not start") }
+        uiState = .listening
+        if machine.mode == .hold {
+            keyCheck = Timer.scheduledTimer(withTimeInterval: keyCheckInterval, repeats: true) { [weak self] _ in
+                guard let self = self, case .recording = self.machine.phase, !self.optionPhysicallyDown else { return }
+                self.feed(self.machine.releaseAll(at: now()))
+            }
+        }
+        refreshUI()
+    }
+
+    func stopKeyCheck() {
+        keyCheck?.invalidate()
+        keyCheck = nil
+    }
+
+    func stopAndSend() {
+        stopKeyCheck()
+        let samples = recorder.stop()
+        uiState = .transcribing
+        refreshUI()
+        guard !samples.isEmpty else { play(.nothingHeard); return endSession() }
+        let id = sessionID
+        var request = URLRequest(url: serverURL.appendingPathComponent("transcribe"), timeoutInterval: transcribeTimeout)
+        request.httpMethod = "POST"
+        request.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
+        request.httpBody = wavData(samples: samples, sampleRate: sampleRate)
+        session.dataTask(with: request) { [weak self] data, response, error in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let result = error.map(transportResult) ?? parseTranscription(status: status, body: data ?? Data())
+            DispatchQueue.main.async {
+                guard let self = self, id == self.sessionID else { return }
+                self.received(result)
+            }
+        }.resume()
+    }
+
+    func received(_ result: TranscribeResult) {
+        switch result {
+        case .text(let text): serverUp = true; deliver(text)
+        case .noSpeech: serverUp = true; play(.nothingHeard); endSession()
+        case .failed(let reason): serverUp = true; cancelRecording(error: String(sanitise(reason).prefix(80)))
+        case .timedOut: cancelRecording(error: "Timed out waiting for the speech server")
+        case .unreachable: serverUp = false; cancelRecording(error: "Speech server not reachable")
+        }
+    }
+
+    func cancelRecording(error: String?) {
+        _ = recorder.stop()
+        if let error = error {
+            lastError = error
+            play(.error)
+        }
+        endSession()
+    }
+
+    func endSession() {
+        stopKeyCheck()
+        mute.release()
+        machine.finished()
+        if !optionPhysicallyDown { _ = machine.releaseAll(at: now()) }
+        uiState = .idle
+        refreshUI()
+    }
+
+    func abortSession() {
+        sessionID += 1
+        stopKeyCheck()
+        _ = recorder.stop()
+        mute.release()
+        machine.reset()
+        uiState = .idle
+        refreshUI()
+    }
+
+    // MARK: Deliver
+
+    func writeTranscript(_ text: String, to pb: NSPasteboard) {
+        pb.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(text, forType: .string)
+        // Clipboard managers that honour this marker skip the transcript.
+        item.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
+        pb.writeObjects([item])
+    }
+
+    func deliver(_ text: String) {
+        let id = sessionID
+        lastTranscript = text
+        let pb = NSPasteboard.general
+        let saved: [NSPasteboardItem] = (pb.pasteboardItems ?? []).map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) { copy.setData(data, forType: type) }
+            }
+            return copy
+        }
+        writeTranscript(text, to: pb)
+        let ours = pb.changeCount
+        let submit = defaults.bool(forKey: DefaultsKey.autoSubmit.rawValue) && wordCount(text) >= 3
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + pasteDelay) {
+            guard id == self.sessionID else { return }
+            self.postKey(pasteKeyCode, flags: .maskCommand)
+            self.lastError = nil
+            self.play(.sent)
+        }
+        if submit {
+            DispatchQueue.main.asyncAfter(deadline: .now() + pasteDelay + returnDelay) {
+                guard id == self.sessionID else { return }
+                self.postKey(returnKeyCode, flags: [])
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + pasteDelay + restoreDelay) {
+            if pb.changeCount == ours {
+                pb.clearContents()
+                if !saved.isEmpty { pb.writeObjects(saved) }
+            }
+            guard id == self.sessionID else { return }
+            self.endSession()
+        }
+    }
+
+    func postKey(_ key: CGKeyCode, flags: CGEventFlags) {
+        // Private state: physically held modifiers (the Option key) must not leak into Cmd-V.
+        let source = CGEventSource(stateID: .privateState)
+        for down in [true, false] {
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: down) else { continue }
+            event.flags = flags
+            event.setIntegerValueField(.eventSourceUserData, value: pardonEventTag)
+            event.post(tap: .cghidEventTap)
+        }
+    }
+
+    // MARK: Server health
+
+    func checkHealth() {
+        guard uiState == .idle else { return }
+        let request = URLRequest(url: serverURL.appendingPathComponent("health"), timeoutInterval: healthTimeout)
+        session.dataTask(with: request) { [weak self] _, response, _ in
+            let ok = (response as? HTTPURLResponse)?.statusCode == 200
+            DispatchQueue.main.async {
+                self?.serverUp = ok
+                self?.refreshUI()
+            }
+        }.resume()
+    }
+
+    // MARK: UI
+
+    func play(_ cue: Cue) {
+        guard let sound = sounds[cue] else { return }
+        sound.stop()
+        sound.play()
+    }
+
+    var health: Health {
+        if !AXIsProcessTrusted() { return .needsAccessibility }
+        if tap == nil { return .hotkeyUnavailable }
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: break
+        case .notDetermined: return .micPending
+        default: return .micDenied
+        }
+        return serverUp == false ? .serverDown : .ready
+    }
+
+    func statusText(_ health: Health) -> String {
+        switch uiState {
+        case .listening: return "Listening…"
+        case .transcribing: return "Transcribing…"
+        case .idle:
+            switch health {
+            case .ready: return lastError.map { "Ready — last attempt failed: \($0)" } ?? "Ready"
+            case .needsAccessibility: return "Grant Accessibility in System Settings"
+            case .hotkeyUnavailable: return "Hotkey unavailable — switch Pardon off and on in Accessibility"
+            case .micPending: return "Waiting for microphone permission"
+            case .micDenied: return "Microphone access denied"
+            case .serverDown: return "Speech server not running — make run-stt"
+            }
+        }
+    }
+
+    func refreshUI() {
+        guard let button = statusItem?.button else { return }
+        let health = self.health
+        let text = statusText(health)
+        let symbol: String
+        switch uiState {
+        case .listening: symbol = "mic.fill"
+        case .transcribing: symbol = "ellipsis.circle"
+        case .idle: symbol = health == .ready ? "mic" : "mic.slash"
+        }
+        guard "\(symbol)|\(text)" != shown else { return }
+        shown = "\(symbol)|\(text)"
+        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Pardon: \(text)") {
+            image.isTemplate = true
+            button.image = image
+            button.title = ""
+        } else {
+            button.image = nil
+            button.title = uiState == .idle ? (health == .ready ? "P" : "P!") : (uiState == .listening ? "P●" : "P…")
+        }
+        statusLine?.title = text
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        checkHealth()
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let health = self.health
+        let status = NSMenuItem(title: statusText(health), action: nil, keyEquivalent: "")
+        status.isEnabled = false
+        menu.addItem(status)
+        statusLine = status
+        let pane = "x-apple.systempreferences:com.apple.preference.security?"
+        switch health {
+        case .needsAccessibility, .hotkeyUnavailable:
+            add(menu, "Open Accessibility Settings…", #selector(openSettings(_:)), on: false, rep: pane + "Privacy_Accessibility")
+        case .micDenied:
+            add(menu, "Open Microphone Settings…", #selector(openSettings(_:)), on: false, rep: pane + "Privacy_Microphone")
+        default: break
+        }
+        add(menu, "Copy last transcript", #selector(copyLastTranscript(_:)), on: false, rep: "").isEnabled = lastTranscript != nil
+        menu.addItem(.separator())
+        add(menu, "Hold to talk", #selector(setMode(_:)), on: mode == .hold, rep: ModeSetting.hold.rawValue)
+        add(menu, "Tap to toggle", #selector(setMode(_:)), on: mode == .tap, rep: ModeSetting.tap.rawValue)
+        menu.addItem(.separator())
+        let header = NSMenuItem(title: "Option key", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        for s in SideSetting.allCases {
+            add(menu, s.rawValue.capitalized, #selector(setSide(_:)), on: side == s, rep: s.rawValue).indentationLevel = 1
+        }
+        menu.addItem(.separator())
+        add(menu, "Auto-submit (Return)", #selector(toggleDefault(_:)),
+            on: defaults.bool(forKey: DefaultsKey.autoSubmit.rawValue), rep: DefaultsKey.autoSubmit.rawValue)
+        add(menu, "Mute Kokoro while recording", #selector(toggleDefault(_:)),
+            on: defaults.bool(forKey: DefaultsKey.muteKokoro.rawValue), rep: DefaultsKey.muteKokoro.rawValue)
+        let loginStatus = SMAppService.mainApp.status
+        let login = add(menu, loginStatus == .requiresApproval ? "Open at Login (approve in System Settings)" : "Open at Login",
+                        #selector(toggleLogin(_:)), on: loginStatus == .enabled, rep: "")
+        if loginStatus == .requiresApproval { login.state = .mixed }
+        menu.addItem(.separator())
+        let info = Bundle.main.infoDictionary
+        let version = (info?["PardonBuild"] as? String) ?? (info?["CFBundleShortVersionString"] as? String) ?? "unknown"
+        let about = NSMenuItem(title: "Pardon \(version)", action: nil, keyEquivalent: "")
+        about.isEnabled = false
+        menu.addItem(about)
+        menu.addItem(NSMenuItem(title: "Quit Pardon", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    }
+
+    @discardableResult
+    func add(_ menu: NSMenu, _ title: String, _ action: Selector, on: Bool, rep: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.state = on ? .on : .off
+        item.representedObject = rep
+        menu.addItem(item)
+        return item
+    }
+
+    @objc func openSettings(_ sender: NSMenuItem) {
+        guard let url = (sender.representedObject as? String).flatMap(URL.init(string:)) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc func copyLastTranscript(_ sender: NSMenuItem) {
+        guard let text = lastTranscript else { return }
+        writeTranscript(text, to: NSPasteboard.general)
+    }
+
+    @objc func setMode(_ sender: NSMenuItem) {
+        defaults.set(sender.representedObject as? String, forKey: DefaultsKey.mode.rawValue)
+        abortSession()
+        machine.mode = mode
+    }
+
+    @objc func setSide(_ sender: NSMenuItem) {
+        defaults.set(sender.representedObject as? String, forKey: DefaultsKey.side.rawValue)
+        abortSession()
+        machine.side = side
+    }
+
+    @objc func toggleDefault(_ sender: NSMenuItem) {
+        guard let key = (sender.representedObject as? String).flatMap(DefaultsKey.init(rawValue:)) else { return }
+        defaults.set(!defaults.bool(forKey: key.rawValue), forKey: key.rawValue)
+    }
+
+    @objc func toggleLogin(_ sender: NSMenuItem) {
+        let service = SMAppService.mainApp
+        switch service.status {
+        case .notRegistered, .notFound:
+            do {
+                try service.register()
+                if service.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+            } catch {
+                SMAppService.openSystemSettingsLoginItems()
+            }
+        case .requiresApproval:
+            SMAppService.openSystemSettingsLoginItems()
+        default:
+            try? service.unregister()
+        }
+    }
+}
+
+// MARK: - Entry
+
+if CommandLine.arguments.contains("--self-test") {
+    exit(runSelfTest())
+}
+if NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? bundleID)
+    .contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+    exit(0)
+}
+// pkill and Ctrl-C must still reach applicationWillTerminate, which releases the mute flag.
+let signalSources: [DispatchSourceSignal] = [SIGTERM, SIGINT].map { sig in
+    signal(sig, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    source.setEventHandler { NSApp.terminate(nil) }
+    source.resume()
+    return source
+}
+let controller = AppController()
+NSApplication.shared.delegate = controller
+NSApplication.shared.setActivationPolicy(.accessory)
+NSApplication.shared.run()
