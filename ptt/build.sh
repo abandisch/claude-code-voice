@@ -20,7 +20,8 @@ APP="$BUILD_DIR/Pardon.app"
 warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
-[ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || die "needs macOS on Apple Silicon"
+# hw.optional.arm64, not uname -m: under Rosetta (CodeQL's build tracer) uname reports x86_64.
+[ "$(uname -s)" = Darwin ] && [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] || die "needs macOS on Apple Silicon"
 [ -x "$SWIFTC" ] || die "swiftc not found at $SWIFTC — install Xcode Command Line Tools: xcode-select --install"
 
 rm -rf "$APP"
