@@ -1,9 +1,13 @@
 #!/bin/sh
-# Copy espeak-ng (binary, data, shared libs) and libstdc++ out of a Debian
-# image into a staging dir that is then layered onto the hardened runtime,
-# which has no package manager. glibc itself is NOT copied: the runtime
-# already has its own, and mixing loaders across images is unsafe.
+# Copy espeak-ng (binary, espeak-ng-data, shared libs), libstdc++ and libgcc_s
+# out of a Debian image, plus a placeholder /etc/machine-id, into a staging dir
+# that is then layered onto the hardened runtime, which has no package manager.
+# glibc itself is NOT copied: the runtime already has its own, and mixing
+# loaders across images is unsafe.
+#
+# Usage (Dockerfile harvest stage):  sh harvest.sh STAGE_DIR
 set -eu
+[ -n "${1:-}" ] || { echo "usage: sh harvest.sh STAGE_DIR" >&2; exit 2; }
 STAGE="$1"
 mkdir -p "$STAGE"
 
@@ -27,7 +31,11 @@ ldd /usr/bin/espeak-ng \
   | while read -r lib; do copy "$lib"; done
 
 # onnxruntime's wheel needs the C++ runtime
-for lib in $(ls /usr/lib/*-linux-gnu/libstdc++.so.6* /usr/lib/*-linux-gnu/libgcc_s.so.1); do copy "$lib"; done
+# A pattern that matches nothing stays literal: skip it rather than fail.
+for lib in /usr/lib/*-linux-gnu/libstdc++.so.6* /usr/lib/*-linux-gnu/libgcc_s.so.1; do
+  [ -e "$lib" ] || [ -L "$lib" ] || continue
+  copy "$lib"
+done
 
 # phoneme data
 data="$(dpkg -L espeak-ng-data | grep -m1 'espeak-ng-data$')"

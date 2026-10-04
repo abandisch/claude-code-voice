@@ -6,6 +6,8 @@ Minimal HTTP front-end for the Parakeet speech-to-text model. Standard library o
        body: WAV, 16 kHz mono 16-bit PCM, <= 10 MB and <= 120 s
        (Content-Type audio/wav or application/octet-stream)
 """
+from __future__ import annotations
+
 import io
 import json
 import os
@@ -29,6 +31,7 @@ MAX_SECONDS = 120
 # Doubles as the CORS defence: neither type is safelisted, so browsers preflight; no OPTIONS handler.
 CONTENT_TYPES = {"audio/wav", "application/octet-stream"}
 HOSTS = {"127.0.0.1", "localhost"}      # hostname only: the published host port is configurable
+PCM_SCALE = 32768.0     # int16 -> float divides by 32768 so -32768 maps to -1.0; the TTS side multiplies by 32767
 
 
 def read_wav(body: bytes) -> np.ndarray:
@@ -43,10 +46,11 @@ def read_wav(body: bytes) -> np.ndarray:
             pcm = w.readframes(p.nframes)
     except (wave.Error, EOFError):
         raise ValueError("body is not a PCM WAV file") from None
-    return np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+    return np.frombuffer(pcm, dtype="<i2").astype(np.float32) / PCM_SCALE
 
 
 def transcribe(audio: np.ndarray, vad: Vad, mel: LogMel, asr: Transducer) -> dict:
+    """VAD trim -> features -> decode; no_speech with empty text when there is no speech to decode."""
     duration = round(len(audio) / SAMPLE_RATE, 3)
     speech = vad.speech(audio)
     try:
@@ -59,7 +63,9 @@ def transcribe(audio: np.ndarray, vad: Vad, mel: LogMel, asr: Transducer) -> dic
 
 
 class Parakeet:
-    def __init__(self, model_dir: pathlib.Path = MODEL_DIR):
+    """The models in `model_dir`, loaded as config.json describes; one inference at a time."""
+
+    def __init__(self, model_dir: pathlib.Path = MODEL_DIR) -> None:
         cfg = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
         vocab = (model_dir / "vocab.txt").read_text(encoding="utf-8").split("\n")[: cfg["vocab_size"]]
         self.files = {k: model_dir / name for k, name in cfg["files"].items()}
@@ -69,22 +75,25 @@ class Parakeet:
         self.lock = threading.Lock()      # one inference at a time
 
     def transcribe(self, audio: np.ndarray) -> dict:
+        """Serialised by the lock: the models run one inference at a time."""
         with self.lock:
             return transcribe(audio, self.vad, self.mel, self.asr)
 
 
 class Handler(BaseHTTPRequestHandler):
-    stt: Parakeet = None  # set in main()
+    """The HTTP routes in the module docstring, loopback Host names only."""
+
+    stt: Parakeet | None = None  # set in main()
     timeout = 15          # seconds; a stalled client cannot hold a thread
 
-    def _send(self, status: int, body: bytes, ctype: str = "application/json"):
+    def _send(self, status: int, body: bytes, ctype: str = "application/json") -> None:
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def _json(self, status: int, obj):
+    def _json(self, status: int, obj: object) -> None:
         self._send(status, json.dumps(obj).encode())
 
     def _host_ok(self) -> bool:
@@ -94,14 +103,16 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
-    def do_GET(self):
+    def do_GET(self) -> None:
+        """Serve /health."""
         if not self._host_ok():
             return self._json(403, {"error": "forbidden"})
         if self.path == "/health":
             return self._json(200, {"ok": True})
         self._json(404, {"error": "not found"})
 
-    def do_POST(self):
+    def do_POST(self) -> None:
+        """Serve /transcribe: WAV in, JSON out; a traceback never reaches the client."""
         if not self._host_ok():
             return self._json(403, {"error": "forbidden"})
         if self.path != "/transcribe":
@@ -129,11 +140,12 @@ class Handler(BaseHTTPRequestHandler):
             self.log_error("transcribe failed: %s", e)
             self._json(500, {"error": "transcription failed"})
 
-    def log_message(self, fmt, *args):  # quieter access log
+    def log_message(self, fmt: str, *args: object) -> None:  # quieter access log
         print(f"{self.address_string()} {fmt % args}", flush=True)
 
 
-def main():
+def main() -> None:
+    """Load and warm up the models, then serve on 0.0.0.0:PORT until killed."""
     start = time.monotonic()
     Handler.stt = Parakeet()
     Handler.stt.asr.decode(*Handler.stt.mel(np.zeros(SAMPLE_RATE, dtype=np.float32)))   # warm-up

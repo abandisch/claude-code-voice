@@ -19,11 +19,13 @@ _ESPEAK_TO_KOKORO = [
 # Keep clause punctuation: Kokoro uses it for pauses and intonation.
 _CLAUSE = re.compile(r"([,.;:!?…]+)\s*")
 
+_ESPEAK_TIMEOUT_S = 10
+
 
 def _espeak(text: str, lang: str) -> str:
     out = subprocess.run(
         ["espeak-ng", "-q", "--ipa=3", "-v", lang, "--", text],
-        capture_output=True, text=True, encoding="utf-8", check=True, timeout=10,
+        capture_output=True, text=True, encoding="utf-8", check=True, timeout=_ESPEAK_TIMEOUT_S,
     ).stdout
     # --ipa=3 separates phonemes with "_". Map while still separated, so a
     # multi-char pattern only matches inside ONE espeak phoneme, then join.
@@ -33,6 +35,7 @@ def _espeak(text: str, lang: str) -> str:
 
 
 def phonemize(text: str, lang: str = "en-gb") -> str:
+    """Text -> Kokoro phoneme string, keeping clause punctuation for prosody."""
     parts = _CLAUSE.split(text.strip())          # [text, punct, text, punct, ...]
     pieces = []
     for i in range(0, len(parts), 2):

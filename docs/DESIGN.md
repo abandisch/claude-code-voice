@@ -54,7 +54,7 @@ Both containers (Kokoro, and Parakeet speech-to-text) get the same profile.
 No mounts. Port published on 127.0.0.1 only. Read-only root filesystem,
 small `noexec` tmpfs for `/tmp`, all capabilities dropped,
 `no-new-privileges`, non-root uid 65532, pids/memory/cpu limits. They share
-compose's own project bridge network, `claude-code-voice_default`.
+compose's own project bridge network, `pardon_default`.
 
 Why not `--network none`? Docker cannot publish a port from a container with
 no network. The image has no shell, no curl, no credentials and nothing that

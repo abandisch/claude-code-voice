@@ -2,6 +2,8 @@
 # Claude Code Notification hook: speak the notification message (e.g. "Claude
 # needs your permission to use Bash") through the local Kokoro container, so
 # you hear when a session is waiting on you. Falls back to macOS `say`.
+# Reads the hook's JSON on stdin; settings are the variables below.
+# No set -e, and every path exits 0: a hook must never break the Claude Code session.
 VOICE="bf_emma"
 SPEED="1.0"
 FALLBACK_SAY_VOICE="Daniel (Enhanced)"

@@ -19,8 +19,8 @@ Goal: Claude Code speaks its `🔊` summary line through a local Kokoro containe
 ## Steps
 
 ```sh
-git clone https://github.com/abandisch/claude-code-voice.git
-cd claude-code-voice
+git clone https://github.com/abandisch/pardon.git
+cd pardon
 docker login dhi.io
 make build      # 5-10 min first time: downloads weights, converts to ONNX, runs the gates
 make run        # container "kokoro" on 127.0.0.1:8880
@@ -28,10 +28,14 @@ make test       # /health, /voices, then speaks a sentence
 make install    # hooks (speak + notify) + settings.json entries + 🔊 rule in ~/.claude/CLAUDE.md
 ```
 
-`make install` is idempotent and backs up anything it changes
-(`~/.claude/settings.json.bak.*`, `~/.claude/hooks/speak.sh.bak.*`). What it
-adds to your global CLAUDE.md is `hook/CLAUDE-snippet.md`; the persona line in
-it is optional — edit it, delete it, or pick a ready-made one from `hook/personas/`.
+`make` with no target lists every target and what it does.
+
+`make install` is idempotent and backs up the hook scripts and settings.json it
+replaces (`~/.claude/settings.json.bak.*`, `~/.claude/hooks/speak.sh.bak.*`); it
+only appends to your global CLAUDE.md. What it appends is `hook/CLAUDE-snippet.md`;
+the persona line in it is optional — edit it, delete it, or pick a ready-made one
+from `hook/personas/`. After an update that changes a hook, `make install` backs up
+your previous copy as a `.bak`, even if you never edited it; that is harmless.
 
 ## Verify
 
@@ -44,11 +48,11 @@ Open a **new** Claude Code session anywhere, ask anything, and listen.
   `~/.claude/CLAUDE.md`), or the Stop hook isn't registered (check
   `~/.claude/settings.json` → `hooks.Stop`).
 
-## Optional: speech-to-text and Pardon (push-to-talk)
+## Optional: speech-to-text and the Pardon app (push-to-talk)
 
 Hold right Option, speak, release: the transcript is pasted into the focused
-window. Parakeet runs in a second container on `127.0.0.1:8881`; Pardon is the
-menu bar app that records and pastes, and its floating orb can be pressed instead
+window. Parakeet runs in a second container on `127.0.0.1:8881`; the Pardon app is the
+menu bar app that records and pastes, and its floating pet can be pressed instead
 of the key. Audio never leaves the Mac.
 
 Extra prerequisites:
@@ -56,7 +60,7 @@ Extra prerequisites:
 - Docker memory of at least 8 GB (Docker Desktop → Settings → Resources) and
   several GB of free build cache; the first build downloads ~2.4 GB of weights
   from huggingface.co.
-- Xcode Command Line Tools (`xcode-select --install`); Pardon builds with `/usr/bin/swift` (a Swift 6 toolchain).
+- Xcode Command Line Tools (`xcode-select --install`); the Pardon app builds with `/usr/bin/swift` (a Swift 6 toolchain).
 
 ```sh
 make build-stt   # 15-30 min first time: downloads weights, exports to ONNX, runs the gates
@@ -64,7 +68,7 @@ make run-stt     # container "parakeet" on 127.0.0.1:8881; ready once make logs-
 make test-stt    # needs Kokoro running too (make run): it speaks the sentence Parakeet must transcribe
 make test-ptt    # Pardon's tests (macOS 14 or later; no GUI, microphone or network)
 make ptt-cert    # optional, once: signing identity so rebuilds keep their permissions
-make ptt         # builds Pardon, installs it in ~/Applications and starts it
+make ptt         # builds the Pardon app, installs it in ~/Applications and starts it
 ```
 
 `make ptt-cert` creates a self-signed code-signing identity named `Pardon` in your
@@ -80,7 +84,7 @@ permission is missing or the speech server is down; open Pardon's menu to see wh
 Everything else: `ptt/README.md` → Troubleshooting.
 
 `docker compose up -d` starts both containers together (`compose.yaml`); Docker
-Desktop shows them as one `claude-code-voice` group.
+Desktop shows them as one `pardon` group (the compose project name).
 
 ## Upgrading from an earlier clone
 
@@ -109,7 +113,7 @@ the `hooks.Stop` and `hooks.Notification` entries from `~/.claude/settings.json`
 if present and the `*.bak.*` backups `make install` left in `~/.claude` and `~/.claude/hooks`, and remove the "Spoken summary" section from
 `~/.claude/CLAUDE.md`.
 
-Pardon: `make clean-ptt` (stops it, removes `ptt/build` and `~/Applications/Pardon.app`);
+The Pardon app: `make clean-ptt` (stops it, removes `ptt/build` and `~/Applications/Pardon.app`);
 remove Pardon from System Settings → Privacy & Security → Microphone and
 Accessibility, and from System Settings → General → Login Items; optionally delete
 the "Pardon" certificate in Keychain Access → login → My Certificates.

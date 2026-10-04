@@ -18,7 +18,7 @@ struct HotkeyMachine {
     static let maxSeconds: TimeInterval = 118
 
     enum Phase: Equatable { case idle, armed(TimeInterval), recording(TimeInterval), busy }
-    // The orb is the pointer trigger; it ignores the side setting.
+    // The pet is the pointer trigger; it ignores the side setting.
     enum Trigger { case key, pointer }
 
     var mode: ModeSetting
@@ -64,7 +64,7 @@ struct HotkeyMachine {
         return false
     }
 
-    // Armed or recording from the orb: a hidden orb could not end it.
+    // Armed or recording from the pet: a hidden pet could not end it.
     var pointerSessionLive: Bool {
         switch phase {
         case .armed, .recording: return trigger == .pointer
@@ -72,7 +72,7 @@ struct HotkeyMachine {
         }
     }
 
-    // A hold recording armed by the orb press still held: a drag may cancel it.
+    // A hold recording armed by the pet press still held: a drag may cancel it.
     var pointerRecordingCancellable: Bool {
         mode == .hold && isRecording && trigger == .pointer && pressArmed
     }

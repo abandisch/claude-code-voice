@@ -4,11 +4,17 @@ Audio -> log-mel features, matching NeMo's FilterbankFeatures at inference.
 Every acoustic constant comes from config.json; the mel basis and the window are
 NeMo's own tensors (mel_basis.npy, window.npy), not recomputed here.
 """
+from __future__ import annotations
+
 import numpy as np
+
+STD_EPSILON = 1e-5      # NeMo's per_feature normalisation constant
 
 
 class LogMel:
-    def __init__(self, cfg: dict, mel_basis: np.ndarray, window: np.ndarray):
+    """NeMo's FilterbankFeatures at inference, configured from config.json's "features"."""
+
+    def __init__(self, cfg: dict, mel_basis: np.ndarray, window: np.ndarray) -> None:
         c = cfg["features"]
         self.n_fft, self.hop, self.pad_mode = c["n_fft"], c["hop_length"], c["pad_mode"]
         self.preemph, self.power, self.guard = c["preemph"], c["mag_power"], c["log_guard"]
@@ -32,6 +38,6 @@ class LogMel:
         if self.normalize == "per_feature":
             # NeMo: statistics over the valid frames only, unbiased std, +1e-5 after the sqrt
             valid = mel[:, :n]
-            mel = (mel - valid.mean(1, keepdims=True)) / (valid.std(1, ddof=1, keepdims=True) + 1e-5)
+            mel = (mel - valid.mean(1, keepdims=True)) / (valid.std(1, ddof=1, keepdims=True) + STD_EPSILON)
         mel[:, n:] = 0.0                                # NeMo pad_value
         return mel[None].astype(np.float32), n

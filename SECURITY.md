@@ -24,9 +24,9 @@ The interesting attack surface here is small but real:
   that weakens them is a bug.
 - The build pipeline (`build/`) — it downloads and converts the model weights;
   the verification gates exist to catch tampering.
-- Pardon (`ptt/`) — holds Microphone and Accessibility permission, sends audio
+- The Pardon app (`ptt/`) — holds Microphone and Accessibility permission, sends audio
   only to `127.0.0.1:8881`, and posts synthetic keystrokes (Cmd-V, optionally
-  Return) into the focused window. Its floating orb is a second trigger under
+  Return) into the focused window. Its floating pet is a second trigger under
   the same rules and needs no further permission. The optional self-signed `Pardon` signing
   identity (`make ptt-cert`) could be used by any program running as the user
   to sign something that inherits those permissions; see `ptt/README.md`.

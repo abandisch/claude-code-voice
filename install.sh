@@ -8,7 +8,10 @@
 #   3. registers both hooks in ~/.claude/settings.json (backs it up first)
 #   4. appends hook/CLAUDE-snippet.md to ~/.claude/CLAUDE.md if the 🔊 rule is absent
 #
-# Run from the repo root:  ./install.sh   (or: make install)
+#   CLAUDE_DIR   Claude Code's directory (default ~/.claude)
+#   JQ           jq binary (default /usr/bin/jq, else /opt/homebrew/bin/jq)
+#
+# Run from anywhere:  ./install.sh   (or: make install)
 set -euo pipefail
 cd "$(dirname "$0")"
 

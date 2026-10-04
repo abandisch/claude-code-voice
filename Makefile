@@ -1,3 +1,17 @@
+.DEFAULT_GOAL := help
+.PHONY: help
+
+## List the targets (the default goal)
+# A target is listed only with a `## ` line above it (plain # lines may sit between), under its `# --- ` group.
+help:
+	@echo "Usage: make <target> [VAR=value]"
+	@awk '/^# --- .* ---$$/ { g = $$0; sub(/^# --- /, "", g); sub(/ ---$$/, "", g); printf "\n%s\n", g; d = ""; next } \
+		/^## / { d = substr($$0, 4); next } \
+		/^#/ { next } \
+		/^[A-Za-z0-9_-]+:/ && d != "" { t = $$0; sub(/:.*/, "", t); printf "  %-13s %s\n", t, d } \
+		{ d = "" }' $(firstword $(MAKEFILE_LIST))
+
+# --- Text-to-speech: Kokoro in its own container (app/, 127.0.0.1:8880) ---
 IMAGE ?= kokoro-tts:local
 PLATFORM ?= linux/arm64
 VOICE ?= bf_emma
@@ -17,10 +31,12 @@ run:
 	docker rm -f kokoro >/dev/null 2>&1 || true
 	KOKORO_IMAGE=$(IMAGE) $(if $(PORT),KOKORO_PORT=$(PORT)) docker compose up -d --force-recreate kokoro
 
+## Stop and remove the kokoro container
 # Removes the compose-created kokoro and one left by the old docker run script alike.
 stop:
 	docker rm -f kokoro 2>/dev/null || true
 
+## Follow the kokoro container's logs
 logs:
 	docker compose logs -f kokoro
 
@@ -35,7 +51,7 @@ COMPOSE_HARDENED = def hardened($$mem; $$port; $$tmp): \
 	and (keys | any(IN("volumes", "build", "privileged", "cap_add", "network_mode", "pid", "ipc", "devices")) | not); \
 	.services | (.kokoro | hardened("1572864000"; 8880; "128m")) and (.parakeet | hardened("2621440000"; 8881; "256m"))
 
-## Check both services' hardening as compose renders compose.yaml (no Docker daemon needed)
+## Check both services' hardening as compose renders compose.yaml (no Docker daemon)
 test-compose:
 	@env -u KOKORO_IMAGE -u KOKORO_PORT -u STT_IMAGE -u STT_PORT -u PORT \
 		docker compose $(if $(COMPOSE_FILE_FOR_TEST),-f $(COMPOSE_FILE_FOR_TEST)) config --format json \
@@ -56,11 +72,12 @@ test:
 scan:
 	docker scout cves $(IMAGE)
 
-## Print the image digest so you can pin KOKORO_IMAGE=kokoro-tts@sha256:... (STT_IMAGE= for parakeet)
+## Print the image digest so you can pin KOKORO_IMAGE=kokoro-tts@sha256:...
+# Parakeet's: make digest IMAGE=parakeet-stt:local
 digest:
 	docker image inspect --format '{{index .RepoDigests 0}}{{"\n"}}{{.Id}}' $(IMAGE)
 
-## Regenerate $(APP_DIR)/requirements.txt with exact versions + sha256 hashes
+## Regenerate app/requirements.txt with exact versions + sha256 hashes
 lock:
 	docker run --rm -v "$(PWD)/$(APP_DIR):/app" -w /tmp dhi.io/python:3.12-debian13-dev sh -c '\
 		pip download -q --only-binary=:all: --platform manylinux_2_28_aarch64 \
@@ -71,9 +88,11 @@ lock:
 				"$$(sha256sum $$w | cut -d" " -f1)"; done | sort > /app/requirements.txt' \
 	&& cat $(APP_DIR)/requirements.txt
 
+## Print the image's SBOM
 sbom:
 	docker sbom $(IMAGE) 2>/dev/null || docker buildx imagetools inspect $(IMAGE) --format '{{json .SBOM}}'
 
+## Stop kokoro and remove its image
 clean: stop
 	docker rmi $(IMAGE) 2>/dev/null || true
 
@@ -118,10 +137,12 @@ run-stt:
 	docker rm -f parakeet >/dev/null 2>&1 || true
 	STT_IMAGE=$(STT_IMAGE) $(if $(PORT),STT_PORT=$(PORT)) docker compose up -d --force-recreate parakeet
 
+## Stop and remove the parakeet container
 # Removes the compose-created parakeet and one left by the old docker run script alike.
 stop-stt:
 	docker rm -f parakeet 2>/dev/null || true
 
+## Follow the parakeet container's logs
 logs-stt:
 	docker compose logs -f parakeet
 
@@ -149,10 +170,11 @@ test-stt:
 lock-stt:
 	@$(MAKE) --no-print-directory lock APP_DIR=stt/app
 
+## Stop parakeet and remove its image
 clean-stt: stop-stt
 	docker rmi $(STT_IMAGE) 2>/dev/null || true
 
-# --- Push-to-talk: Pardon, the menu bar app (ptt/) ---
+# --- Push-to-talk: the Pardon menu bar app (ptt/) ---
 PTT_APP ?= $(HOME)/Applications/Pardon.app
 SWIFT ?= /usr/bin/swift
 # Refuse to rm -rf anything that is not an .app bundle path.
@@ -164,7 +186,7 @@ PTT_STOP = pids=$$($(PTT_PIDS)); [ -z "$$pids" ] || /bin/kill $$pids 2>/dev/null
 
 .PHONY: ptt test-ptt ptt-cert stop-ptt clean-ptt
 
-## Build Pardon, replace the installed copy in $(PTT_APP) and start it
+## Build Pardon, replace the installed copy in ~/Applications/Pardon.app and start it
 ptt:
 	@$(PTT_APP_GUARD)
 	SWIFT="$(SWIFT)" ./ptt/build.sh
@@ -173,7 +195,7 @@ ptt:
 	if [ -n "$$($(PTT_PIDS))" ]; then echo "Pardon did not quit within 5 s; quit it from its menu and run make ptt again"; exit 1; fi
 	@mkdir -p "$$(dirname "$(PTT_APP)")" && rm -rf "$(PTT_APP)" && \
 	/usr/bin/ditto ptt/build/Pardon.app "$(PTT_APP)" && /usr/bin/open "$(PTT_APP)"
-	@echo "Pardon installed at $(PTT_APP); its mic icon is in the menu bar and its orb near the bottom-right of the screen; grant Microphone and Accessibility when asked (see ptt/README.md)"
+	@echo "Pardon installed at $(PTT_APP); its mic icon is in the menu bar and its pet near the bottom-right of the screen; grant Microphone and Accessibility when asked (see ptt/README.md)"
 
 ## Run Pardon's Swift package tests (no GUI, mic or network; needs macOS 14 or later)
 test-ptt:
@@ -183,10 +205,12 @@ test-ptt:
 ptt-cert:
 	./ptt/make-cert.sh
 
+## Quit the installed Pardon app
 stop-ptt:
 	@$(PTT_STOP)
 
-## Stop Pardon; remove ptt/build and the installed app (not the certificate or the macOS permission entries)
+## Stop Pardon; remove ptt/build and the installed app
+# Keeps the signing certificate and the macOS permission entries.
 clean-ptt: stop-ptt
 	@$(PTT_APP_GUARD)
 	rm -rf ptt/build "$(PTT_APP)"
@@ -194,7 +218,8 @@ clean-ptt: stop-ptt
 # --- Release: tag main as vX.Y.Z (tag only) ---
 .PHONY: release test-release
 
-## Check main is clean and pushed, run test-ptt, choose patch/minor/major, tag and push that tag
+## Check main is clean and pushed, run test-ptt, then tag vX.Y.Z and push that tag
+# You choose a patch, minor or major bump.
 release:
 	./scripts/release.sh
 

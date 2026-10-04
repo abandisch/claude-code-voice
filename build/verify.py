@@ -58,6 +58,7 @@ from onnx import numpy_helper
 
 SAMPLE_RATE = 24_000
 N_FFT, HOP, N_MELS = 1024, 256, 80
+LOG_MEL_FLOOR = 1e-5          # silent bins must not dominate the distance
 
 GATE_A1_MIN_SNR_DB = 50.0     # front half: strict float-precision parity
 RANDOM_OPS = {"RandomNormal", "RandomNormalLike", "RandomUniform", "RandomUniformLike", "Multinomial", "Bernoulli"}
@@ -82,6 +83,7 @@ class Case:
     n_tokens: int
 
     def feeds(self) -> dict[str, np.ndarray]:
+        """The ORT input feed for this case."""
         return {"input_ids": self.input_ids, "style": self.style, "speed": self.speed}
 
 
@@ -123,7 +125,7 @@ def _log_mel(audio: np.ndarray) -> torch.Tensor:
         wave, n_fft=N_FFT, hop_length=HOP, window=torch.hann_window(N_FFT),
         center=True, return_complex=True,
     ).abs() ** 2
-    return torch.log10((_mel_filterbank() @ spec).clamp_min(1e-5))
+    return torch.log10((_mel_filterbank() @ spec).clamp_min(LOG_MEL_FLOOR))
 
 
 def _mel_distance(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -143,13 +145,14 @@ def _session(path: pathlib.Path, threads: int | None = None) -> ort.InferenceSes
 @dataclasses.dataclass
 class Floor:
     """Log-mel spread of the STOCHASTIC torch model on one case."""
-    mels: list          # log-mel of each torch run
+    mels: list[torch.Tensor]    # log-mel of each torch run
     samples: int
     mean: float
     std: float
 
     @property
     def limit(self) -> float:
+        """The largest log-mel distance a gate accepts for this case."""
         return min(self.mean + FLOOR_SIGMA * self.std, FLOOR_CEILING)
 
 

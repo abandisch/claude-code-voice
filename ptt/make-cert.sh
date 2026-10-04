@@ -7,6 +7,9 @@
 #   - the certificate is NOT marked trusted for anything (no add-trusted-cert)
 #   - codesign is explicitly allowed to use the key (-T /usr/bin/codesign); the key is not extractable (-x)
 #
+#   KEYCHAIN   target keychain (default ~/Library/Keychains/login.keychain-db)
+#   OPENSSL    openssl binary (default /usr/bin/openssl)
+#
 # Run from anywhere:  ./ptt/make-cert.sh   (or: make ptt-cert)
 set -euo pipefail
 cd "$(dirname "$0")"

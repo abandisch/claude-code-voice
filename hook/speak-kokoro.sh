@@ -1,6 +1,8 @@
 #!/bin/bash
 # Claude Code Stop hook: speak the 🔊 summary line through the local Kokoro
 # container. Falls back to macOS `say` if the container is not running.
+# Reads the hook's JSON on stdin; settings are the variables below.
+# No set -e, and every path exits 0: a hook must never break the Claude Code session.
 VOICE="bf_emma"
 SPEED="1.0"
 FALLBACK_SAY_VOICE="Daniel (Enhanced)"

@@ -63,9 +63,11 @@ CHECK_PHONEMES = {
 INPUT_NAMES = ["input_ids", "style", "speed"]
 DYNAMIC_AXES = {"input_ids": {1: "tokens"}, "audio": {0: "samples"}}
 OPSET = 17
+VOICE_PACK_SHAPE = (510, 1, 256)    # one style row per token count
 
 
-def sha256(path) -> str:
+def sha256(path: str | pathlib.Path) -> str:
+    """Hex SHA-256 of a file, read in 1 MiB chunks."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
@@ -76,16 +78,18 @@ def sha256(path) -> str:
 class Exportable(torch.nn.Module):
     """Fixed (input_ids, style, speed) -> audio signature for the ONNX graph."""
 
-    def __init__(self, model: KModel):
+    def __init__(self, model: KModel) -> None:
         super().__init__()
         self.model = model
 
-    def forward(self, input_ids, style, speed):
+    def forward(self, input_ids: torch.Tensor, style: torch.Tensor, speed: torch.Tensor) -> torch.Tensor:
+        """Audio only; the predicted durations are dropped."""
         audio, _durations = self.model.forward_with_tokens(input_ids, style, speed)
         return audio
 
 
 def make_case(label: str, phonemes: str, vocab: dict, pack: np.ndarray) -> Case:
+    """A gate input built the way app/server.py builds a request; exits if no token survives."""
     ids = [vocab[c] for c in phonemes if c in vocab]
     if not ids:
         sys.exit(f"[convert] FAIL {label!r} produced no tokens")
@@ -98,7 +102,8 @@ def make_case(label: str, phonemes: str, vocab: dict, pack: np.ndarray) -> Case:
     )
 
 
-def torch_runner(wrapper: Exportable):
+def torch_runner(wrapper: Exportable) -> verify.RunTorch:
+    """A Case -> audio callable over the torch model, without autograd."""
     def run(case: Case) -> np.ndarray:
         with torch.no_grad():
             audio = wrapper(
@@ -135,6 +140,7 @@ def export(wrapper: Exportable, case: Case, path: pathlib.Path) -> None:
 
 
 def main() -> None:
+    """Fetch, export and gate the model into --out; kokoro.onnx appears only if every gate passes."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--revision", default="main")
     ap.add_argument("--voices", nargs="+", required=True)
@@ -160,7 +166,7 @@ def main() -> None:
         p = hf_hub_download(REPO, f"voices/{name}.pt", revision=a.revision)
         manifest["inputs"][f"voices/{name}.pt"] = sha256(p)
         arr = torch.load(p, map_location="cpu", weights_only=True).numpy().astype(np.float32)
-        assert arr.shape == (510, 1, 256), f"{name}: unexpected shape {arr.shape}"
+        assert arr.shape == VOICE_PACK_SHAPE, f"{name}: unexpected shape {arr.shape}"
         np.save(out / "voices" / f"{name}.npy", arr)
         packs[name] = arr
         print(f"[convert] voice {name} {arr.shape}")

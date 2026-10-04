@@ -1,7 +1,7 @@
-# Pardon (push-to-talk menu bar app)
+# Pardon.app (push-to-talk menu bar app)
 
 A small macOS menu bar app for the Parakeet STT container: hold the Option key (or the
-floating orb), speak, let go, and the transcript is pasted into whatever window has focus.
+floating pet), speak, let go, and the transcript is pasted into whatever window has focus.
 Audio is recorded in memory and sent only to `127.0.0.1:8881`. No audio or transcript is
 written to disk or to any log; settings live in the app's preferences file, and the Kokoro
 mute flag (below) is a file.
@@ -34,7 +34,7 @@ mute flag (below) is a file.
 ## Build and run
 
 `make ptt` builds `ptt/build/Pardon.app`, replaces `~/Applications/Pardon.app` (override
-with `PTT_APP=…`) and starts it. The microphone icon appears in the menu bar and the orb
+with `PTT_APP=…`) and starts it. The microphone icon appears in the menu bar and the pet
 near the bottom-right of the screen; there is no Dock icon. On first launch:
 
 1. Allow the microphone when macOS asks.
@@ -47,8 +47,8 @@ and reopen Pardon.
 `make test-ptt` runs the Swift package's tests in `ptt/Tests/` (macOS 14 or later), which
 cover the hotkey state machine, key decoding, WAV header, transcript sanitising, response
 parsing, the reply size cap, the focus check, the paste key lookup, the mute flag, the
-orb as a trigger (handover with the key, lost releases, which clicks count), and the
-orb's gesture and its drag grace for a recording, hit test, placement, saved position,
+pet as a trigger (handover with the key, lost releases, which clicks count), and the
+pet's gesture and its drag grace for a recording, hit test, placement, saved position,
 looks and how long an outcome shows, animations, the idle frame rate and the Animate when
 idle toggle, voice level and level smoothing, and the characters (the registry, the saved
 choice, the arc reactor's ring geometry and animations, and that it draws nothing outside
@@ -64,7 +64,7 @@ installed app; not the certificate or the entries in System Settings).
 - **Hold to talk** (default): hold Option on its own, speak, release. Recording starts
   0.25 s after the press, so a quick press does nothing and an Option chord typed within
   a quarter of a second never starts the microphone. Pressing any later key, or any click
-  while recording except a left click on the orb, cancels silently.
+  while recording except a left click on the pet, cancels silently.
 - **Tap to toggle**: tap Option (under 0.4 s, on its own) to start, tap again to send.
   Typing while recording does not cancel.
 - The menu chooses which Option key counts: right (default), left or either. Changing
@@ -104,7 +104,7 @@ Sounds: Tink when recording starts, Pop when the text is pasted, Purr when nothi
 heard, Basso on any error. After an error the menu's status line says what went wrong
 until the next successful paste.
 
-## The orb
+## The pet
 
 A small floating circle that does what the Option key does, for when a hand is on the
 mouse. It sits above ordinary windows, on every Space and over full-screen apps, but
@@ -113,16 +113,16 @@ transcript is meant for.
 
 - **Press and hold** it to talk, release to send: the same Hold to talk / Tap to toggle
   setting, delays and 118 s limit as the key (in tap mode, click once to start and once to
-  send). While one of the orb or the Option key is recording, the other is ignored; in tap
-  mode the key cannot stop a recording the orb started, and the orb cannot stop one the
+  send). While one of the pet or the Option key is recording, the other is ignored; in tap
+  mode the key cannot stop a recording the pet started, and the pet cannot stop one the
   key started.
 - **Drag** it to move it. Before a recording starts, a press that moves more than a few
   points becomes a drag and records nothing. Once a hold-mode recording started by this
   press is running, moving more than 10 points from where you pressed within 1.5 seconds of
-  pressing cancels it silently (nothing is sent) and drags the orb; after that, or for a
+  pressing cancels it silently (nothing is sent) and drags the pet; after that, or for a
   smaller move, the movement is ignored and releasing sends. In tap mode the stop click
   never drags, and a recording started with the Option key is not affected by dragging the
-  orb.
+  pet.
 - It stays where you drop it, on that display, and is pulled back on screen at launch and
   when displays change; it returns to its place when an unplugged display comes back. To
   reset its position: `defaults delete io.github.abandisch.pardon orbOrigin`, then
@@ -132,11 +132,11 @@ transcript is meant for.
   the microphone level is not measured, from the moment it is hidden.
 - **Pet** in the menu, just below Show pet, picks how it is drawn: **Arc reactor**
   (the default) or the original blue **Orb**. The change is immediate, in the same place,
-  and does not interrupt a recording. The submenu is greyed out while the orb is hidden.
+  and does not interrupt a recording. The submenu is greyed out while the pet is hidden.
   The choice is remembered across launches; to reset it to the default:
   `defaults delete io.github.abandisch.pardon character`.
 - **Animate when idle** in the menu, just below Pet (on by default; greyed out while the
-  orb is hidden), turns the repeating motion of the ready, pasted, nothing heard and error
+  pet is hidden), turns the repeating motion of the ready, pasted, nothing heard and error
   looks on or off. Off, those looks hold still, but the one-off effects still play (the
   ripple or flash after a paste, the dim after nothing heard), listening and transcribing
   still move, and Reduce Motion overrides it. On, the idle animation runs at 30 frames a
@@ -198,11 +198,11 @@ steady, larger, whiter core and a brighter segment ring.
 
 - ~2000 lines of our own Swift in `ptt/Sources/`: `Pardon/main.swift` (the entry point) and
   the `PardonKit` library: `App/`, `Hotkey/`, `Audio/`, `Transcription/` and `Delivery/` (the
-  app), `Pet/` (the orb, its blue character and the arc reactor character, both drawn in
+  app), `Pet/` (the pet, its blue Orb character and the arc reactor character, both drawn in
   code with no image files). The tests are in `ptt/Tests/PardonKitTests/` and are not
   part of the app.
 - Apple system frameworks only: AppKit, AVFoundation, Carbon (keyboard layout lookup),
-  CoreGraphics, QuartzCore (the orb's animation), ApplicationServices, ServiceManagement,
+  CoreGraphics, QuartzCore (the pet's animation), ApplicationServices, ServiceManagement,
   Foundation; the tests use Swift Testing from the toolchain. No third-party code:
   `ptt/Package.swift` uses the Swift Package Manager that ships with the toolchain and
   declares no package dependencies.
@@ -223,7 +223,7 @@ steady, larger, whiter core and a brighter segment ring.
   this recurring.
 - **Microphone access denied**: System Settings → Privacy & Security → Microphone, then
   switch Pardon on.
-- **Orb not visible**: check **Show pet** in the menu; if it is on, reset its position with
+- **Pet not visible**: check **Show pet** in the menu; if it is on, reset its position with
   `defaults delete io.github.abandisch.pardon orbOrigin` and relaunch Pardon.
 - **Hotkey does nothing in a password field or in Terminal**: while a password field or
   Terminal's Secure Keyboard Entry is active, macOS may withhold key events from Pardon.

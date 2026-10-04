@@ -1,7 +1,7 @@
 #!/bin/bash
 # Tag a release of main as vX.Y.Z and push that tag. Tag only: no builds, no uploads.
 #
-#   DRY_RUN=1    skip the terminal check, fetch, Pardon's tests, tag and push; print what would happen
+#   DRY_RUN=1    skip the terminal check, fetch, the Pardon app's tests (make test-ptt), tag and push; print what would happen
 #   CHOICE=1..4  the menu answer in a dry run (1 patch, 2 minor, 3 major, 4 abort)
 #   --self-test  check the version arithmetic and tag filtering only
 #
@@ -77,7 +77,7 @@ if [ "${1:-}" = --self-test ]; then
 fi
 [ $# -eq 0 ] || die "usage: scripts/release.sh [--self-test]   (DRY_RUN=1 CHOICE=1..4 for a dry run)"
 
-[ "$(git rev-parse --show-toplevel 2>/dev/null)" = "$(pwd -P)" ] || die "not inside the claude-code-voice repository"
+[ "$(git rev-parse --show-toplevel 2>/dev/null)" = "$(pwd -P)" ] || die "not inside the Pardon repository"
 [ "$DRY_RUN" = 1 ] || [ -t 0 ] || die "needs a terminal to answer the prompts (or DRY_RUN=1)"
 branch="$(git symbolic-ref --short -q HEAD || true)"
 [ "$branch" = main ] || die "on branch '${branch:-detached HEAD}'; releases are tagged from main"
@@ -94,7 +94,7 @@ fi
 if [ "$DRY_RUN" = 1 ]; then
   warn "dry run: would run make test-ptt"
 else
-  make --no-print-directory test-ptt || die "Pardon's tests failed; nothing tagged"
+  make --no-print-directory test-ptt || die "the Pardon app's tests (make test-ptt) failed; nothing tagged"
 fi
 
 current="$(git tag -l | latest_version)"

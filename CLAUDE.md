@@ -1,13 +1,16 @@
-# claude-code-voice
+# Pardon
+
+Pardon is the whole project: local text-to-speech for Claude Code, local speech-to-text,
+and the Pardon menu bar app that ties them together.
 
 Local neural text-to-speech: Kokoro-82M converted to ONNX by us and served from a
 hardened, non-root Docker container on `127.0.0.1:8880`. A Claude Code Stop hook
 posts the `🔊` summary line to it and plays the WAV, replacing macOS `say`.
 Every ingredient is nameable; ~170 lines of our own Python run in the image.
 Optional speech-to-text: Parakeet in a second hardened container on `127.0.0.1:8881`
-(`stt/`), and Pardon (`ptt/`), a Swift menu bar push-to-talk app that pastes its
+(`stt/`), and the Pardon app (`ptt/`), a Swift menu bar push-to-talk app that pastes its
 transcript into the focused window. `compose.yaml` holds both containers' runtime flags.
-Public repo: https://github.com/abandisch/claude-code-voice
+Public repo: https://github.com/abandisch/pardon
 
 ## If the user asks to "set this up" (fresh machine)
 
@@ -26,7 +29,7 @@ Follow `SETUP.md`. Split the work like this:
    the Stop hook didn't land — see SETUP.md → Verify.
 4. Do not install the hook by hand-editing `~/.claude/settings.json` when
    `make install` is available; it is idempotent and makes backups.
-5. Speech-to-text + Pardon is the optional second part of `SETUP.md`; offer it, don't assume it.
+5. Speech-to-text + the Pardon app is the optional second part of `SETUP.md`; offer it, don't assume it.
 
 ## Start here (any other task)
 

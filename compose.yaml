@@ -3,7 +3,7 @@
 #
 #   ports 127.0.0.1:…      the ONLY thing published is the HTTP port, and only on
 #                          127.0.0.1 (not your LAN)
-#   networks (default)     compose's own project bridge, claude-code-voice_default
+#   networks (default)     compose's own project bridge, pardon_default
 #   read_only              root filesystem is immutable; /tmp is a small tmpfs
 #   cap_drop ALL           no Linux capabilities at all
 #   no-new-privileges      setuid/setcap binaries cannot escalate
@@ -21,7 +21,7 @@
 # Tip: after the first run, pin each image to the digest printed by `make digest`
 # (`make digest IMAGE=parakeet-stt:local`): KOKORO_IMAGE=kokoro-tts@sha256:… and
 # STT_IMAGE=parakeet-stt@sha256:…
-name: claude-code-voice
+name: pardon
 
 services:
   kokoro:

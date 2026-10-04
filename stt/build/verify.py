@@ -41,12 +41,19 @@ import threading
 import time
 import wave
 from http.server import ThreadingHTTPServer
+from typing import TYPE_CHECKING
 
 import numpy as np
 import onnxruntime as ort
 
 import server
 from decode import Transducer, feed
+
+if TYPE_CHECKING:
+    import pathlib
+
+    from features import LogMel
+    from vad import Vad
 
 SAMPLE_RATE = 16_000
 # LibriSpeech test-clean 2086-149220-0033 (CC-BY-4.0, build-time only), LibriSpeech's own transcript.
@@ -58,12 +65,15 @@ G1_MIN_SNR_DB = 50.0
 G1_MAX_INT8_WER = 0.05
 G2_MAX_ONNX_WER = 0.15
 G2_MAX_NEMO_WER = 0.10
+G3_CLIP_S = 2                 # length of the silence and noise clips
 G3_HEAD_S = 3
 G3_MAX_PREFIX_WER = 0.25
 G3_MIN_HEAD_WORDS = 5
 G3_NOISE_STD = 0.003          # about -50 dBFS
 G3_LOUD_NOISE_STD = 0.018     # about -35 dBFS, informational
 G4_RUNS = 3
+G4_CLIP_S = 10
+G6_TIMEOUT_S = 10
 # (input ranks, output ranks) in the positional order app/decode.py feeds and reads.
 EXPECTED_RANKS = {
     "encoder": ([3, 1], [3, 1]),                # features, length -> enc (1, D, T), enc length
@@ -86,6 +96,7 @@ def snr_db(ref: np.ndarray, test: np.ndarray) -> float:
 
 
 def words(text: str) -> list[str]:
+    """Lowercase words with punctuation removed, apostrophes kept."""
     return re.sub(r"[^a-z' ]+", " ", text.lower()).split()
 
 
@@ -100,6 +111,7 @@ def wer(hyp: list[str], ref: list[str]) -> float:
 
 
 def describe(session: ort.InferenceSession) -> dict:
+    """Input and output [name, rank] pairs in positional order."""
     return {
         "inputs": [[i.name, len(i.shape)] for i in session.get_inputs()],
         "outputs": [[o.name, len(o.shape)] for o in session.get_outputs()],
@@ -108,6 +120,7 @@ def describe(session: ort.InferenceSession) -> dict:
 
 # --- G0 ---------------------------------------------------------------------
 def gate_g0_structure(paths: dict, cfg: dict, vocab: list[str]) -> Transducer:
+    """-> the int8 candidates as a Transducer, once their io and probe shapes check out."""
     print("[gate G0] structure of the encoder / decoder / joiner candidates")
     try:
         asr = Transducer(paths, cfg, vocab)
@@ -141,7 +154,8 @@ def gate_g0_structure(paths: dict, cfg: dict, vocab: list[str]) -> Transducer:
 
 
 # --- G1 ---------------------------------------------------------------------
-def gate_g1_parity(ref: dict, fp32: Transducer, int8: Transducer, mel, audio: np.ndarray) -> None:
+def gate_g1_parity(ref: dict, fp32: Transducer, int8: Transducer, mel: LogMel, audio: np.ndarray) -> None:
+    """Our features and fp32 encoder against NeMo's; fp32 text identical, int8 within G1_MAX_INT8_WER."""
     print("[gate G1] parity with NeMo on the fixture (our log-mel and decode)")
     failures = []
     feats, n = mel(audio)
@@ -175,7 +189,7 @@ def gate_g1_parity(ref: dict, fp32: Transducer, int8: Transducer, mel, audio: np
 
 
 # --- G2 ---------------------------------------------------------------------
-def gate_g2_wer(vad, mel, asr: Transducer, audio: np.ndarray, nemo_text: str) -> str:
+def gate_g2_wer(vad: Vad, mel: LogMel, asr: Transducer, audio: np.ndarray, nemo_text: str) -> str:
     """-> the int8 transcript of the full fixture through server.transcribe()."""
     print("[gate G2] real-speech WER against LibriSpeech's transcript (int8, through server.transcribe)")
     truth = words(FIXTURE_TRUTH)
@@ -197,12 +211,13 @@ def gate_g2_wer(vad, mel, asr: Transducer, audio: np.ndarray, nemo_text: str) ->
 
 
 # --- G3 ---------------------------------------------------------------------
-def gate_g3_silence(vad, mel, asr: Transducer, audio: np.ndarray) -> None:
+def gate_g3_silence(vad: Vad, mel: LogMel, asr: Transducer, audio: np.ndarray) -> None:
+    """Silence and quiet noise give no_speech; a short utterance before silence still gives text."""
     print("[gate G3] silence and noise -> no speech; short utterance + trailing silence -> text")
     failures = []
     quiet = {
-        "silence": np.zeros(2 * SAMPLE_RATE, dtype=np.float32),
-        "noise": np.random.default_rng(0).normal(0.0, G3_NOISE_STD, 2 * SAMPLE_RATE).astype(np.float32),
+        "silence": np.zeros(G3_CLIP_S * SAMPLE_RATE, dtype=np.float32),
+        "noise": np.random.default_rng(0).normal(0.0, G3_NOISE_STD, G3_CLIP_S * SAMPLE_RATE).astype(np.float32),
     }
     for label, clip in quiet.items():
         found = vad.speech(clip) is not None
@@ -211,7 +226,7 @@ def gate_g3_silence(vad, mel, asr: Transducer, audio: np.ndarray) -> None:
         if found or not result["no_speech"] or result["text"]:
             failures.append(f"{label}: expected no_speech with empty text, got {result}")
 
-    loud = np.random.default_rng(1).normal(0.0, G3_LOUD_NOISE_STD, 2 * SAMPLE_RATE).astype(np.float32)
+    loud = np.random.default_rng(1).normal(0.0, G3_LOUD_NOISE_STD, G3_CLIP_S * SAMPLE_RATE).astype(np.float32)
     result = server.transcribe(loud, vad, mel, asr)
     print(f"[gate G3] loud-noise 2 s (~-35 dBFS): vad speech={vad.speech(loud) is not None} -> {result} (info)")
 
@@ -228,7 +243,7 @@ def gate_g3_silence(vad, mel, asr: Transducer, audio: np.ndarray) -> None:
 
 
 # --- G4 ---------------------------------------------------------------------
-def _stage_times(vad, mel, asr: Transducer, clip: np.ndarray) -> dict:
+def _stage_times(vad: Vad, mel: LogMel, asr: Transducer, clip: np.ndarray) -> dict:
     marks = [time.perf_counter()]
     speech = vad.speech(clip)
     marks.append(time.perf_counter())
@@ -241,16 +256,16 @@ def _stage_times(vad, mel, asr: Transducer, clip: np.ndarray) -> dict:
     return dict(zip(("vad", "mel", "encoder", "decode"), np.diff(marks)))
 
 
-def gate_g4_latency(vad, mel, trios: dict, audio: np.ndarray) -> None:
+def gate_g4_latency(vad: Vad, mel: LogMel, trios: dict[str, Transducer], audio: np.ndarray) -> None:
     """Never fails: the build host is not the container, so this is a hint only."""
-    clip = np.resize(audio, 10 * SAMPLE_RATE)        # fixture repeated/cropped to 10 s
+    clip = np.resize(audio, G4_CLIP_S * SAMPLE_RATE)        # fixture repeated/cropped to 10 s
     for label, asr in trios.items():
         _stage_times(vad, mel, asr, clip)             # warm-up, same shape as the timed runs
         runs = sorted((_stage_times(vad, mel, asr, clip) for _ in range(G4_RUNS)), key=lambda r: sum(r.values()))
         mid = runs[len(runs) // 2]
         total = sum(mid.values())
         stages = " ".join(f"{k} {v:.2f}s" for k, v in mid.items())
-        print(f"[gate G4] {label} 10 s clip, median of {G4_RUNS}: {total:.2f} s (RTF {total / 10:.2f}) "
+        print(f"[gate G4] {label} 10 s clip, median of {G4_RUNS}: {total:.2f} s (RTF {total / G4_CLIP_S:.2f}) "
               f"= {stages} (info)")
     long = np.resize(audio, server.MAX_SECONDS * SAMPLE_RATE)
     start = time.perf_counter()
@@ -263,7 +278,8 @@ def gate_g4_latency(vad, mel, trios: dict, audio: np.ndarray) -> None:
 
 
 # --- G5 ---------------------------------------------------------------------
-def gate_g5_artefact(model_dir, audio: np.ndarray, full_text: str) -> None:
+def gate_g5_artefact(model_dir: pathlib.Path, audio: np.ndarray, full_text: str) -> None:
+    """server.Parakeet loaded from `model_dir` must reproduce G2's transcript of the fixture."""
     print(f"[gate G5] the shipped artefact: server.Parakeet loaded from {model_dir}")
     try:
         stt = server.Parakeet(model_dir)
@@ -301,6 +317,7 @@ class _StubModel:
 
 
 def gate_g6_http() -> None:
+    """read_wav rejects malformed input; the handler returns the right status per request shape."""
     print("[gate G6] read_wav rejections and HTTP status codes (stub model)")
     failures = []
     bad = {
@@ -336,7 +353,7 @@ def gate_g6_http() -> None:
     ]
     try:
         for label, method, path, body, headers, want_status, want_json in cases:
-            conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=10)
+            conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=G6_TIMEOUT_S)
             try:
                 # putrequest, not request(): request() would add a Content-Length the cases must control
                 conn.putrequest(method, path, skip_host="Host" in headers, skip_accept_encoding=True)

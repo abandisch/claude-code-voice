@@ -4,6 +4,8 @@ Token-and-Duration Transducer (TDT) greedy decode over three onnxruntime session
 The joiner scores vocab + blank and, separately, how many encoder frames to skip.
 Blank is the last token id; it is also the start symbol for the prediction network.
 """
+from __future__ import annotations
+
 import numpy as np
 import onnxruntime as ort
 
@@ -11,13 +13,15 @@ _DTYPE = {"tensor(float)": np.float32, "tensor(int32)": np.int32, "tensor(int64)
 _CPU = ["CPUExecutionProvider"]
 
 
-def feed(session: ort.InferenceSession, *arrays) -> dict:
-    # Inputs are bound positionally; gate G0 pins the order.
+def feed(session: ort.InferenceSession, *arrays: object) -> dict:
+    """`arrays` as the session's input feed, cast to each input's dtype; positional, gate G0 pins the order."""
     return {i.name: np.asarray(a, dtype=_DTYPE[i.type]) for i, a in zip(session.get_inputs(), arrays)}
 
 
 class Transducer:
-    def __init__(self, paths: dict, cfg: dict, vocab: list[str], threads: int = 4):
+    """Encoder, decoder and joiner sessions with the TDT greedy decode over them."""
+
+    def __init__(self, paths: dict, cfg: dict, vocab: list[str], threads: int = 4) -> None:
         enc_opts = ort.SessionOptions()
         enc_opts.intra_op_num_threads = threads
         enc_opts.enable_mem_pattern = False             # input length differs on every request
@@ -33,15 +37,17 @@ class Transducer:
         self.max_symbols = cfg["max_symbols_per_step"]
         self.zero_state = np.zeros((cfg["pred_rnn_layers"], 1, cfg["pred_hidden"]), dtype=np.float32)
 
-    def _predict(self, token: int, h: np.ndarray, c: np.ndarray):
+    def _predict(self, token: int, h: np.ndarray, c: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         out, _length, h, c = self.decoder.run(None, feed(self.decoder, [[token]], [1], h, c))
         return out, h, c
 
     def encode(self, features: np.ndarray, n: int) -> np.ndarray:
+        """Log-mel features with `n` valid frames -> encoder output (1, D, T), trimmed to its valid length."""
         enc, enc_len = self.encoder.run(None, feed(self.encoder, features, [n]))
         return np.ascontiguousarray(enc[:, :, : int(enc_len[0])])     # (1, D, T)
 
     def greedy(self, enc: np.ndarray) -> str:
+        """TDT greedy decode of encoder output to text, at most max_symbols tokens per frame."""
         h = c = self.zero_state
         dec, h_next, c_next = self._predict(self.blank, h, c)
         tokens = []
@@ -63,4 +69,5 @@ class Transducer:
         return "".join(self.vocab[i] for i in tokens).replace("▁", " ").strip()
 
     def decode(self, features: np.ndarray, n: int) -> str:
+        """Log-mel features with `n` valid frames -> text."""
         return self.greedy(self.encode(features, n))

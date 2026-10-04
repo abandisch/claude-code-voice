@@ -1,10 +1,11 @@
-# claude-code-voice — Claude Code talks back
+# Pardon — Claude Code talks back, and listens
 
 Give Claude Code a voice. Every response ends with a one-line spoken summary
 (marked `🔊`); a Stop hook sends that line to a local neural text-to-speech
 server and plays it, so you hear what Claude did without reading the
 terminal — handy when you're across the room, mid-build, or just prefer to
-listen.
+listen. This speech half installs on its own (Quick start below), without
+building the Pardon app.
 
 ```
 🔊 Build is green, the hook is installed, and the voice is yours to choose.
@@ -17,10 +18,30 @@ If the container is down, the hook falls back to macOS `say`, so it never
 goes silent.
 
 It works the other way too: an optional second container runs NVIDIA's
-Parakeet speech-to-text, and Pardon, a small menu bar app, lets you hold the
-right Option key (or a small floating orb), speak and let go; the transcript is
+Parakeet speech-to-text, and the Pardon app, a small menu bar app, lets you hold the
+right Option key (or the small floating pet), speak and let go; the transcript is
 pasted into whatever window has focus. Also entirely local: audio never leaves
 the Mac.
+
+Pardon is the name of the whole project: local text-to-speech for Claude Code
+(Kokoro), local speech-to-text (Parakeet), and the Pardon menu bar app that ties
+them together.
+
+Formerly called claude-code-voice. Existing clones keep working through GitHub's
+redirect; to point yours at the new name (optional):
+
+```sh
+git remote set-url origin git@github.com:abandisch/pardon.git     # SSH
+git remote set-url origin https://github.com/abandisch/pardon.git # https
+```
+
+If containers from the old name exist, remove them and their network once;
+otherwise `docker compose up -d` clashes with their fixed names (`make run`
+replaces them itself but leaves the old network behind):
+
+```sh
+docker compose -p claude-code-voice down
+```
 
 ## Quick start
 
@@ -57,17 +78,17 @@ make build-stt         # 15-30 min first time: ~2.4 GB of weights, export, verif
 make run-stt           # container "parakeet" on 127.0.0.1:8881
 make test-stt          # needs Kokoro running too (make run): it speaks the sentence Parakeet transcribes
 make ptt-cert          # optional, once: signing identity so rebuilds keep their permissions
-make ptt               # builds Pardon into ~/Applications and starts it
+make ptt               # builds the Pardon app into ~/Applications and starts it
 ```
 
 Grant Microphone and Accessibility when macOS asks, then hold right Option,
 speak, release. Details: [`stt/README.md`](stt/README.md) (the container and
-its API) and [`ptt/README.md`](ptt/README.md) (Pardon: settings, permissions,
+its API) and [`ptt/README.md`](ptt/README.md) (the Pardon app: settings, permissions,
 the signing identity, troubleshooting).
 
 Both containers are defined in [`compose.yaml`](compose.yaml):
 `docker compose up -d` starts them together, and Docker Desktop shows them as
-one `claude-code-voice` group.
+one `pardon` group (the compose project name).
 
 ## Configure
 
@@ -77,6 +98,7 @@ one `claude-code-voice` group.
   voice: add it to `VOICES` in the Dockerfile and `make build`.
 - **Port:** `PORT=8890 make run`, and update `URL=` in the hook.
 - **Stop / logs:** `make stop`, `make logs`.
+- **Every target:** `make` on its own (or `make help`) lists them.
 - **Say anything:** `make say TEXT="Good evening" VOICE=bm_fable SPEED=1.2` —
   handy for auditioning voices or startling the cat.
 - **Meetings:** `make mute` silences both hooks; `make unmute` restores the
@@ -107,7 +129,7 @@ Both containers run read-only, non-root, with all capabilities dropped
 Speech-to-text follows the same rules: NVIDIA's Parakeet weights, pinned by
 commit and sha256, are exported to ONNX and int8-quantised by `stt/`'s own
 build, which fails unless the result passes accuracy gates; Silero VAD is
-pinned by sha256; ~290 lines of Python in `stt/app/`. Pardon is a Swift
+pinned by sha256; ~290 lines of Python in `stt/app/`. The Pardon app is a Swift
 package in `ptt/` using Apple system frameworks only, and sends audio nowhere but
 `127.0.0.1:8881`.
 

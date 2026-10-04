@@ -58,7 +58,8 @@ PARTS = ("encoder", "decoder", "joiner")
 QUANT = {"encoder": QuantType.QUInt8, "decoder": QuantType.QInt8, "joiner": QuantType.QInt8}
 
 
-def sha256(path) -> str:
+def sha256(path: str | pathlib.Path) -> str:
+    """Hex SHA-256 of a file, read in 1 MiB chunks."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
@@ -66,7 +67,7 @@ def sha256(path) -> str:
     return h.hexdigest()
 
 
-def runtime_config(model) -> dict:
+def runtime_config(model: ASRModel) -> dict:
     """Everything app/ needs, read off the restored model."""
     fz = model.preprocessor.featurizer
     pre = model.cfg.preprocessor
@@ -101,7 +102,7 @@ def runtime_config(model) -> dict:
     }
 
 
-def nemo_reference(model, audio: np.ndarray, fixture: pathlib.Path) -> dict:
+def nemo_reference(model: ASRModel, audio: np.ndarray, fixture: pathlib.Path) -> dict:
     """NeMo's own features, encoder output and transcribe() text for the fixture."""
     with torch.no_grad():
         feats, feat_len = model.preprocessor(
@@ -119,6 +120,7 @@ def nemo_reference(model, audio: np.ndarray, fixture: pathlib.Path) -> dict:
 
 
 def main() -> None:
+    """Fetch, export, quantise and gate the model into --out; a gate failure empties it."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--revision", default="main")
     ap.add_argument("--weights-sha256", default="")

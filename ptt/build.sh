@@ -56,7 +56,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
-  <key>NSMicrophoneUsageDescription</key><string>Pardon records your voice only while you are dictating with the Option key or the orb, and sends it only to the speech-to-text container on this Mac.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Pardon records your voice only while you are dictating with the Option key or the floating pet, and sends it only to the speech-to-text container on this Mac.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key><true/>

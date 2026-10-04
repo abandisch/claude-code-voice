@@ -1,0 +1,17 @@
+# Linter configuration only: ruff and mypy are not installed or run by this project.
+# Not packaging metadata; the Python here is flat scripts copied into two Docker images.
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+# Flat imports (`import server`, `from decode import ...`) resolve from these directories.
+src = ["app", "build", "stt/app", "stt/build"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+# torch, onnx, onnxruntime, nemo, kokoro and huggingface_hub are untyped or absent outside the images.
+ignore_missing_imports = true
+# app/ and stt/app/ both define `server`: check one image at a time (app build, or stt/app stt/build).
