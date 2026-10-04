@@ -1,260 +1,5 @@
-// The arc reactor: the orb's default character, concentric rings drawn with Core Animation layers.
 import AppKit
 import QuartzCore
-
-let reactorSegments = 10
-let reactorSegmentRadius: CGFloat = 18
-let reactorSegmentFill: CGFloat = 0.7
-let reactorOuterRadius: CGFloat = 24
-let reactorOuterGaps = 3
-let reactorOuterFill: CGFloat = 0.88
-let reactorChaseLit = 3
-
-// A block and a gap; count of them tile the circle of this radius exactly, so the ring has no seam.
-func reactorDashes(radius: CGFloat, count: Int, fill: CGFloat) -> [CGFloat] {
-    let period = 2 * .pi * radius / CGFloat(count)
-    return [period * fill, period * (1 - fill)]
-}
-
-// lit blocks on the segment grid, then one gap for the rest of the lap.
-func reactorChaseDashes(radius: CGFloat, count: Int, fill: CGFloat, lit: Int) -> [CGFloat] {
-    let d = reactorDashes(radius: radius, count: count, fill: fill)
-    return Array(repeating: d, count: lit - 1).flatMap { $0 } + [d[0], d[1] + CGFloat(count - lit) * (d[0] + d[1])]
-}
-
-final class ArcReactor: PetCharacter {
-    static let displayName = "Arc reactor"
-    private typealias RGB = (r: CGFloat, g: CGFloat, b: CGFloat)
-    private typealias Palette = (ring: RGB, hot: RGB)
-    private static let cyan: Palette = ((0.55, 0.92, 1.0), (0.97, 1.0, 1.0))
-    private static let amber: Palette = ((1.0, 0.45, 0.2), (1.0, 0.86, 0.7))
-    private static let grey: Palette = ((0.6, 0.62, 0.65), (0.86, 0.87, 0.88))
-    private static let white: RGB = (1, 1, 1)
-    private static let plate = CGColor(srgbRed: 0.02, green: 0.06, blue: 0.11, alpha: 0.85)
-
-    fileprivate let stage = CALayer()
-    private let backplate = CALayer()
-    fileprivate let outer = CAShapeLayer()
-    fileprivate let segments = CAShapeLayer()
-    fileprivate let chaser = CAShapeLayer()
-    fileprivate let inner = CAShapeLayer()
-    fileprivate let heart = CALayer()
-    private let glow = CAGradientLayer()
-    fileprivate let core = CAGradientLayer()
-    fileprivate let wave = CAShapeLayer()
-    private var palette = ArcReactor.cyan
-    private var look: OrbLook?
-    private var reduceMotion = false
-    var animatesWhenIdle = true { didSet { if animatesWhenIdle != oldValue { look = nil } } }
-    private var shownLevel: CGFloat?
-
-    private static func cg(_ c: RGB, _ alpha: CGFloat) -> CGColor { CGColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: alpha) }
-
-    private static func mix(_ a: RGB, _ b: RGB, _ t: CGFloat) -> RGB {
-        (a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t)
-    }
-
-    // The frame is the whole circle, so a ring turns about the circle's centre.
-    private static func ring(_ layer: CAShapeLayer, in circle: CGRect, radius: CGFloat, width: CGFloat, dashes: [CGFloat]?) {
-        layer.frame = circle
-        let c = CGPoint(x: circle.width / 2, y: circle.height / 2)
-        layer.path = CGPath(ellipseIn: CGRect(x: c.x - radius, y: c.y - radius, width: 2 * radius, height: 2 * radius), transform: nil)
-        layer.fillColor = nil
-        layer.lineWidth = width
-        layer.lineDashPattern = dashes?.map { NSNumber(value: Double($0)) }
-    }
-
-    private static func disc(_ layer: CAGradientLayer, side: CGFloat, in box: CGRect) {
-        layer.frame = CGRect(x: box.midX - side / 2, y: box.midY - side / 2, width: side, height: side)
-        layer.type = .radial
-        layer.startPoint = CGPoint(x: 0.5, y: 0.5)
-        layer.endPoint = CGPoint(x: 1, y: 1)
-    }
-
-    func makeLayer(size: CGSize) -> CALayer {
-        let root = CALayer()
-        root.frame = CGRect(origin: .zero, size: size)
-        stage.frame = root.bounds
-        root.addSublayer(stage)
-        let circle = CGRect(x: (size.width - orbDiameter) / 2, y: (size.height - orbDiameter) / 2,
-                            width: orbDiameter, height: orbDiameter)
-        backplate.frame = circle
-        backplate.cornerRadius = orbDiameter / 2
-        backplate.backgroundColor = Self.plate
-        backplate.borderWidth = 1
-        Self.ring(outer, in: circle, radius: reactorOuterRadius, width: 1.5,
-                  dashes: reactorDashes(radius: reactorOuterRadius, count: reactorOuterGaps, fill: reactorOuterFill))
-        Self.ring(segments, in: circle, radius: reactorSegmentRadius, width: 6,
-                  dashes: reactorDashes(radius: reactorSegmentRadius, count: reactorSegments, fill: reactorSegmentFill))
-        Self.ring(chaser, in: circle, radius: reactorSegmentRadius, width: 6,
-                  dashes: reactorChaseDashes(radius: reactorSegmentRadius, count: reactorSegments, fill: reactorSegmentFill,
-                                             lit: reactorChaseLit))
-        Self.ring(inner, in: circle, radius: 11, width: 1.5, dashes: nil)
-        // Grows from the core to just inside the rim.
-        Self.ring(wave, in: circle, radius: 26, width: 1.5, dashes: nil)
-        heart.frame = circle
-        Self.disc(glow, side: 34, in: heart.bounds)
-        Self.disc(core, side: 14, in: heart.bounds)
-        core.cornerRadius = 7
-        core.masksToBounds = true
-        heart.addSublayer(glow)
-        heart.addSublayer(core)
-        for layer in [backplate, outer, segments, chaser, inner, heart, wave] { stage.addSublayer(layer) }
-        restyle(.idle)
-        look = .idle
-        return root
-    }
-
-    func apply(_ look: OrbLook, level: Double, reduceMotion: Bool) {
-        if look != self.look || reduceMotion != self.reduceMotion {
-            self.look = look
-            self.reduceMotion = reduceMotion
-            restyle(look)
-        }
-        if look == .listening, !reduceMotion { listen(CGFloat(min(max(level, 0), 1))) }
-    }
-
-    private func restyle(_ look: OrbLook) {
-        // Rings never snap: each keeps the angle it is shown at, as its model and as any spin's start.
-        let angles = [segments, outer].map {
-            (($0.presentation() ?? $0).value(forKeyPath: "transform.rotation.z") as? NSNumber)?.doubleValue ?? 0
-        }
-        let opacity: Float
-        switch look {
-        case .listening: palette = Self.cyan; opacity = 1
-        case .transcribing: palette = Self.cyan; opacity = 0.95
-        case .error: palette = Self.amber; opacity = 0.85
-        case .needsPermission: palette = Self.grey; opacity = 0.5
-        case .idle, .sent, .nothingHeard: palette = Self.cyan; opacity = 0.9
-        }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for layer in [stage, backplate, outer, segments, chaser, inner, heart, glow, core, wave] { layer.removeAllAnimations() }
-        shownLevel = nil
-        segments.transform = CATransform3DMakeRotation(CGFloat(angles[0]), 0, 0, 1)
-        // The lit blocks sit on the dim grid.
-        chaser.transform = segments.transform
-        outer.transform = CATransform3DMakeRotation(CGFloat(angles[1]), 0, 0, 1)
-        stage.opacity = opacity
-        backplate.borderColor = Self.cg(palette.ring, 0.8)
-        outer.strokeColor = Self.cg(palette.ring, 0.75)
-        inner.strokeColor = Self.cg(palette.ring, 0.9)
-        wave.strokeColor = Self.cg(palette.ring, 1)
-        wave.opacity = 0
-        chaser.strokeColor = Self.cg(Self.mix(palette.ring, Self.white, 0.6), 1)
-        chaser.opacity = look == .transcribing ? 1 : 0
-        segments.opacity = look == .transcribing ? 0.35 : 0.85
-        core.transform = CATransform3DIdentity
-        glow.opacity = 0.8
-        shade(0)
-        // Without motion, listening is told apart by a steady bright core instead.
-        if look == .listening, reduceMotion {
-            core.transform = CATransform3DMakeScale(1.25, 1.25, 1)
-            glow.opacity = 1
-            segments.opacity = 1
-            shade(1)
-        }
-        CATransaction.commit()
-        guard !reduceMotion else { return }
-        switch look {
-        case .idle: idle(angles)
-        case .sent:
-            idle(angles)
-            let grow = CABasicAnimation(keyPath: "transform.scale")
-            grow.fromValue = 7.0 / 26
-            grow.toValue = 1.0
-            grow.duration = 0.6
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 0.9
-            fade.toValue = 0.0
-            fade.duration = 0.6
-            let group = CAAnimationGroup()
-            group.animations = [grow, fade]
-            group.duration = 0.6
-            group.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            wave.add(group, forKey: "wave")
-        case .nothingHeard:
-            idle(angles)
-            let dim = CABasicAnimation(keyPath: "opacity")
-            dim.fromValue = 0.35
-            dim.toValue = Double(opacity)
-            dim.duration = 0.8
-            dim.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            stage.add(dim, forKey: "dim")
-        case .listening:
-            spin(segments, "spin", period: 3, clockwise: true, from: angles[0])
-            spin(outer, "counterSpin", period: 5, clockwise: false, from: angles[1])
-        case .transcribing:
-            let period = Double(2 * .pi * reactorSegmentRadius) / Double(reactorSegments)
-            let steps = CAKeyframeAnimation(keyPath: "lineDashPhase")
-            // The ellipse path runs anticlockwise in these unflipped layers; a rising phase moves dashes back along it, so clockwise.
-            steps.values = (0..<reactorSegments).map { Double($0) * period }
-            steps.calculationMode = .discrete
-            steps.duration = 1.2
-            steps.repeatCount = .infinity
-            chaser.add(steps, forKey: "chase")
-            spin(outer, "counterSpin", period: 5, clockwise: false, from: angles[1])
-        case .error:
-            guard animatesWhenIdle else { break }
-            spin(segments, "spin", period: 40, clockwise: true, from: angles[0], capped: true)
-            spin(outer, "counterSpin", period: 60, clockwise: false, from: angles[1], capped: true)
-        case .needsPermission: break
-        }
-    }
-
-    private func idle(_ angles: [Double]) {
-        guard animatesWhenIdle else { return }
-        spin(segments, "spin", period: 20, clockwise: true, from: angles[0], capped: true)
-        spin(outer, "counterSpin", period: 30, clockwise: false, from: angles[1], capped: true)
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 0.75
-        fade.toValue = 1.0
-        fade.duration = 1.5
-        let swell = CABasicAnimation(keyPath: "transform.scale")
-        swell.fromValue = 0.9
-        swell.toValue = 1.0
-        swell.duration = 1.5
-        let group = CAAnimationGroup()
-        group.animations = [fade, swell]
-        group.duration = 1.5
-        group.autoreverses = true
-        group.repeatCount = .infinity
-        group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        capIdleFrameRate(group)
-        heart.add(group, forKey: "pulse")
-    }
-
-    // These layers are not flipped: a negative angle turns clockwise on screen.
-    private func spin(_ layer: CALayer, _ key: String, period: CFTimeInterval, clockwise: Bool, from angle: Double, capped: Bool = false) {
-        let a = CABasicAnimation(keyPath: "transform.rotation.z")
-        a.fromValue = angle
-        a.toValue = angle + (clockwise ? -2 : 2) * Double.pi
-        a.duration = period
-        a.repeatCount = .infinity
-        if capped { capIdleFrameRate(a) }
-        layer.add(a, forKey: key)
-    }
-
-    private func shade(_ level: CGFloat) {
-        segments.strokeColor = Self.cg(Self.mix(palette.ring, Self.white, 0.6 * level), 1)
-        core.colors = [Self.cg(palette.hot, 1), Self.cg(Self.mix(palette.ring, Self.white, level), 1)]
-        glow.colors = [Self.cg(Self.mix(palette.ring, Self.white, 0.3 * level), 0.55), Self.cg(palette.ring, 0)]
-    }
-
-    // The core at full voice is still inside the inner ring.
-    private func listen(_ level: CGFloat) {
-        if let shown = shownLevel, abs(level - shown) < 0.01 { return }
-        shownLevel = level
-        let scale = 1 + 0.35 * level
-        CATransaction.begin()
-        CATransaction.setAnimationDuration(0.1)
-        core.transform = CATransform3DMakeScale(scale, scale, 1)
-        glow.opacity = Float(0.6 + 0.4 * level)
-        segments.opacity = Float(0.75 + 0.25 * level)
-        shade(level)
-        CATransaction.commit()
-    }
-}
 
 // MARK: - Self-test
 
@@ -286,7 +31,7 @@ func runReactorSelfTest(_ check: (String, Bool) -> Void) {
     check("dashes: a ring path starts at three o'clock and runs anticlockwise, y up", ends.count >= 2
           && near(ends[0].x, 1) && near(ends[0].y, 0) && ends[1].y > 0.5)
 
-    let side = orbPanelSide
+    let side = petPanelSide
     let reactor = ArcReactor()
     let root = reactor.makeLayer(size: CGSize(width: side, height: side))
     func layers(_ l: CALayer) -> [CALayer] { [l] + (l.sublayers ?? []).flatMap(layers) }
@@ -359,7 +104,7 @@ func runReactorSelfTest(_ check: (String, Bool) -> Void) {
     check("reactor motion: needs permission is still", layers(root).allSatisfy { ($0.animationKeys() ?? []).isEmpty })
     check("reactor: error and needs permission are coloured apart from idle", idleStroke != errorStroke
           && idleStroke != reactor.outer.strokeColor && errorStroke != reactor.outer.strokeColor)
-    let allLooks: [OrbLook] = [.idle, .listening, .transcribing, .sent, .nothingHeard, .error, .needsPermission]
+    let allLooks: [PetLook] = [.idle, .listening, .transcribing, .sent, .nothingHeard, .error, .needsPermission]
     check("reactor motion: Reduce Motion stills every look",
           allLooks.allSatisfy { look in
               reactor.apply(look, level: 1, reduceMotion: true)
@@ -394,19 +139,10 @@ func runReactorSelfTest(_ check: (String, Bool) -> Void) {
     check("reactor: Reduce Motion and leaving transcribing leave the ring where it was",
           abs(rotation(reactor.segments) - 0.7) < 0.05 && rotation(reactor.chaser) == rotation(reactor.segments))
 
-    func capped(_ a: CAAnimation?) -> Bool { a?.preferredFrameRateRange == petIdleFrameRate }
-    func cappedGroup(_ a: CAAnimation?) -> Bool {
-        let children = (a as? CAAnimationGroup)?.animations ?? []
-        return capped(a) && children.count == 2 && children.allSatisfy(capped)
-    }
-    func uncapped(_ a: CAAnimation?) -> Bool {
-        guard let a = a else { return false }
-        return ([a] + ((a as? CAAnimationGroup)?.animations ?? [])).allSatisfy { $0.preferredFrameRateRange == .default }
-    }
     func spinsCapped() -> Bool {
         capped(reactor.segments.animation(forKey: "spin")) && capped(reactor.outer.animation(forKey: "counterSpin"))
     }
-    for look in [OrbLook.idle, .sent, .nothingHeard] {
+    for look in [PetLook.idle, .sent, .nothingHeard] {
         reactor.apply(look, level: 0, reduceMotion: false)
         check("idle rate: reactor \(look) spins and pulse are capped, the pulse's parts too",
               spinsCapped() && cappedGroup(reactor.heart.animation(forKey: "pulse")))
@@ -495,16 +231,16 @@ func runReactorSelfTest(_ check: (String, Bool) -> Void) {
     }
     func staysInside(_ top: CALayer) -> Bool {
         layers(top).allSatisfy { l in
-            (!paints(l) || reach(l, in: top) <= orbDiameter / 2 + 1e-6)
+            (!paints(l) || reach(l, in: top) <= petDiameter / 2 + 1e-6)
                 && (l.animationKeys() ?? []).flatMap { scales(l.animation(forKey: $0)) }.allSatisfy { $0 <= 1 }
         }
     }
     let probe = CALayer()
     probe.frame = CGRect(x: 0, y: 0, width: side, height: side)
     let halo = CALayer()
-    halo.frame = CGRect(x: orbGlowMargin, y: orbGlowMargin, width: orbDiameter, height: orbDiameter)
+    halo.frame = CGRect(x: petGlowMargin, y: petGlowMargin, width: petDiameter, height: petDiameter)
     halo.backgroundColor = CGColor(gray: 1, alpha: 1)
-    halo.cornerRadius = orbDiameter / 2
+    halo.cornerRadius = petDiameter / 2
     halo.shadowOpacity = 0.3
     halo.shadowRadius = 5
     probe.addSublayer(halo)
@@ -518,13 +254,13 @@ func runReactorSelfTest(_ check: (String, Bool) -> Void) {
     check("inside: the check catches a swell above full size", clean && !staysInside(probe))
     halo.removeAllAnimations()
     halo.cornerRadius = 0
-    let square = CGRect(x: orbGlowMargin, y: orbGlowMargin, width: orbDiameter, height: orbDiameter)
+    let square = CGRect(x: petGlowMargin, y: petGlowMargin, width: petDiameter, height: petDiameter)
     check("inside: the check catches square corners that fit the square but not the circle",
           square.contains(halo.frame) && !staysInside(probe))
-    halo.cornerRadius = orbDiameter / 2
+    halo.cornerRadius = petDiameter / 2
     let rim = CAShapeLayer()
     rim.frame = halo.frame
-    rim.path = CGPath(ellipseIn: CGRect(x: 0.5, y: 0.5, width: orbDiameter - 1, height: orbDiameter - 1), transform: nil)
+    rim.path = CGPath(ellipseIn: CGRect(x: 0.5, y: 0.5, width: petDiameter - 1, height: petDiameter - 1), transform: nil)
     rim.lineWidth = 1
     probe.addSublayer(rim)
     let snug = staysInside(probe)
@@ -533,14 +269,14 @@ func runReactorSelfTest(_ check: (String, Bool) -> Void) {
     rim.lineWidth = 1
     let sheen = CAGradientLayer()
     sheen.frame = halo.frame
-    sheen.cornerRadius = orbDiameter / 2
+    sheen.cornerRadius = petDiameter / 2
     probe.addSublayer(sheen)
     let unmasked = staysInside(probe)
     sheen.masksToBounds = true
     check("inside: the check counts a gradient's rounding only when it masks", !unmasked && staysInside(probe))
     let fresh = ArcReactor()
     let drawn = fresh.makeLayer(size: CGSize(width: side, height: side))
-    for look in [OrbLook.idle, .sent, .nothingHeard, .transcribing, .error, .needsPermission, .listening] {
+    for look in [PetLook.idle, .sent, .nothingHeard, .transcribing, .error, .needsPermission, .listening] {
         fresh.apply(.listening, level: 1, reduceMotion: false)
         fresh.apply(look, level: 1, reduceMotion: false)
         check("inside: reactor \(look) paints only inside the circle", staysInside(drawn))

@@ -192,10 +192,10 @@ steady, larger, whiter core and a brighter segment ring.
 
 ## Every ingredient
 
-- Four Swift files, ~3000 lines of our own code: `ptt/ptt.swift` (the app),
-  `ptt/pet.swift` (the orb and its blue character), `ptt/reactor.swift` (the arc reactor
-  character), both drawn in code with no image files, and `ptt/main.swift` (the entry
-  point).
+- ~3000 lines of our own Swift in `ptt/Sources/Pardon/`: `main.swift` (the entry point),
+  `App/`, `Hotkey/`, `Audio/`, `Transcription/` and `Delivery/` (the app), `Pet/` (the orb,
+  its blue character and the arc reactor character, both drawn in code with no image
+  files), and `SelfTest/` (the `--self-test` checks).
 - Apple system frameworks only: AppKit, AVFoundation, Carbon (keyboard layout lookup),
   CoreGraphics, QuartzCore (the orb's animation), ApplicationServices, ServiceManagement,
   Foundation. No third-party code, no package manager.

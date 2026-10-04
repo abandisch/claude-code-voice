@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build Pardon.app from main.swift, ptt.swift, pet.swift and reactor.swift: compile, write Info.plist, sign. Does not install or open.
+# Build Pardon.app from the Swift sources under Sources/Pardon: compile, write Info.plist, sign. Does not install or open.
 #
 #   SWIFTC      compiler (default /usr/bin/swiftc, from Xcode Command Line Tools)
 #   SWIFTFLAGS  extra compiler flags, e.g. -sdk / -module-cache-path
@@ -23,12 +23,15 @@ die()  { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 # hw.optional.arm64, not uname -m: under Rosetta (CodeQL's build tracer) uname reports x86_64.
 [ "$(uname -s)" = Darwin ] && [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] || die "needs macOS on Apple Silicon"
 [ -x "$SWIFTC" ] || die "swiftc not found at $SWIFTC — install Xcode Command Line Tools: xcode-select --install"
+sources=()
+while IFS= read -r f; do sources+=("$f"); done < <(find Sources/Pardon -name '*.swift' -type f | LC_ALL=C sort)
+[ "${#sources[@]}" -gt 0 ] || die "no Swift sources found under ptt/Sources/Pardon"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 # SWIFTFLAGS is deliberately unquoted: it carries several flags.
 # shellcheck disable=SC2086
-"$SWIFTC" -O -swift-version 5 -target arm64-apple-macos13.0 $SWIFTFLAGS main.swift ptt.swift pet.swift reactor.swift -o "$APP/Contents/MacOS/Pardon"
+"$SWIFTC" -O -swift-version 5 -target arm64-apple-macos13.0 $SWIFTFLAGS "${sources[@]}" -o "$APP/Contents/MacOS/Pardon"
 
 BUILD="$( (git describe --tags --always --dirty 2>/dev/null || echo unknown) | tr -cd 'A-Za-z0-9._+-')"
 BUILD="${BUILD:-unknown}"
