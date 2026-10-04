@@ -1,4 +1,4 @@
-# Advanced setup: CodeQL's default setup cannot build ptt/ptt.swift (no Xcode project or Swift package).
+# Advanced setup: CodeQL's default setup cannot build Pardon's Swift files in ptt/ (no Xcode project or Swift package).
 # Pins are full commit SHAs; to bump, resolve the release tag to its commit and change init and analyze together.
 name: CodeQL
 

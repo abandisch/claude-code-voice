@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build Pardon.app from ptt.swift: compile, write Info.plist, sign. Does not install or open.
+# Build Pardon.app from main.swift, ptt.swift and pet.swift: compile, write Info.plist, sign. Does not install or open.
 #
 #   SWIFTC      compiler (default /usr/bin/swiftc, from Xcode Command Line Tools)
 #   SWIFTFLAGS  extra compiler flags, e.g. -sdk / -module-cache-path
@@ -28,7 +28,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 # SWIFTFLAGS is deliberately unquoted: it carries several flags.
 # shellcheck disable=SC2086
-"$SWIFTC" -O -swift-version 5 -target arm64-apple-macos13.0 $SWIFTFLAGS ptt.swift -o "$APP/Contents/MacOS/Pardon"
+"$SWIFTC" -O -swift-version 5 -target arm64-apple-macos13.0 $SWIFTFLAGS main.swift ptt.swift pet.swift -o "$APP/Contents/MacOS/Pardon"
 
 BUILD="$( (git describe --tags --always --dirty 2>/dev/null || echo unknown) | tr -cd 'A-Za-z0-9._+-')"
 BUILD="${BUILD:-unknown}"
@@ -55,7 +55,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
-  <key>NSMicrophoneUsageDescription</key><string>Pardon records your voice only while you are dictating with the Option key, and sends it only to the speech-to-text container on this Mac.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Pardon records your voice only while you are dictating with the Option key or the orb, and sends it only to the speech-to-text container on this Mac.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key><true/>

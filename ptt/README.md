@@ -1,10 +1,10 @@
 # Pardon (push-to-talk menu bar app)
 
-A small macOS menu bar app for the Parakeet STT container: hold the Option key, speak,
-let go, and the transcript is pasted into whatever window has focus. Audio is recorded
-in memory and sent only to `127.0.0.1:8881`. No audio or transcript is written to disk or
-to any log; settings live in the app's preferences file, and the Kokoro mute flag (below)
-is a file.
+A small macOS menu bar app for the Parakeet STT container: hold the Option key (or the
+floating orb), speak, let go, and the transcript is pasted into whatever window has focus.
+Audio is recorded in memory and sent only to `127.0.0.1:8881`. No audio or transcript is
+written to disk or to any log; settings live in the app's preferences file, and the Kokoro
+mute flag (below) is a file.
 
 ## Before the first build
 
@@ -33,8 +33,8 @@ is a file.
 ## Build and run
 
 `make ptt` builds `ptt/build/Pardon.app`, replaces `~/Applications/Pardon.app` (override
-with `PTT_APP=…`) and starts it. The microphone icon appears in the menu bar; there is no
-Dock icon. On first launch:
+with `PTT_APP=…`) and starts it. The microphone icon appears in the menu bar and the orb
+near the bottom-right of the screen; there is no Dock icon. On first launch:
 
 1. Allow the microphone when macOS asks.
 2. In the Accessibility dialog, choose Open System Settings and switch Pardon on.
@@ -45,8 +45,11 @@ and reopen Pardon.
 
 `make test-ptt` compiles an unsigned copy into a temp directory and runs its self-test
 (the hotkey state machine, key decoding, WAV header, transcript sanitising, response
-parsing, the reply size cap, the focus check, the paste key lookup, the mute flag; no
-GUI, microphone or network, and it touches only a temporary directory). Also
+parsing, the reply size cap, the focus check, the paste key lookup, the mute flag, the
+orb as a trigger (handover with the key, lost releases, which clicks count), and the
+orb's gesture, hit test, placement, saved position, looks, animations, voice level and
+level smoothing; no GUI, microphone or
+network, and it touches only a temporary directory). Also
 `make stop-ptt` and `make clean-ptt` (stops the app and removes `ptt/build` and the
 installed app; not the certificate or the entries in System Settings).
 
@@ -54,8 +57,8 @@ installed app; not the certificate or the entries in System Settings).
 
 - **Hold to talk** (default): hold Option on its own, speak, release. Recording starts
   0.25 s after the press, so a quick press does nothing and an Option chord typed within
-  a quarter of a second never starts the microphone. Pressing any later key or clicking
-  while recording cancels silently.
+  a quarter of a second never starts the microphone. Pressing any later key, or any click
+  while recording except a left click on the orb, cancels silently.
 - **Tap to toggle**: tap Option (under 0.4 s, on its own) to start, tap again to send.
   Typing while recording does not cancel.
 - The menu chooses which Option key counts: right (default), left or either. Changing
@@ -95,6 +98,45 @@ Sounds: Tink when recording starts, Pop when the text is pasted, Purr when nothi
 heard, Basso on any error. After an error the menu's status line says what went wrong
 until the next successful paste.
 
+## The orb
+
+A small floating circle that does what the Option key does, for when a hand is on the
+mouse. It sits above ordinary windows, on every Space and over full-screen apps, but
+below the Dock, menus and system overlays, and never takes focus from the window the
+transcript is meant for.
+
+- **Press and hold** it to talk, release to send: the same Hold to talk / Tap to toggle
+  setting, delays and 118 s limit as the key (in tap mode, click once to start and once to
+  send). While one of the orb or the Option key is recording, the other is ignored; in tap
+  mode the key cannot stop a recording the orb started, and the orb cannot stop one the
+  key started.
+- **Drag** it to move it: start moving within a quarter of a second. A press that moves
+  more than a few points before recording has started becomes a drag and records nothing;
+  press and pause and a recording starts, and the orb will not move until you release.
+- It stays where you drop it, on that display, and is pulled back on screen at launch and
+  when displays change; it returns to its place when an unplugged display comes back. To
+  reset its position: `defaults delete io.github.abandisch.pardon orbOrigin`, then
+  relaunch Pardon.
+- **Right-click** (or Control-click) opens the same menu as the menu bar icon.
+- **Show orb** in the menu hides or shows it (on by default). Hidden, it does nothing and
+  the microphone level is not measured, from the moment it is hidden.
+- Without Accessibility it stays grey and pressing it does nothing (the paste could not
+  be posted anyway).
+
+| Look | Meaning |
+| --- | --- |
+| Dim blue, slow breath | Ready |
+| Bright, pulsing with your voice, blue warming toward white | Listening |
+| Swirling shimmer | Transcribing |
+| One quick flash | Pasted |
+| Soft fade | Nothing heard |
+| Amber-red | The last attempt failed, or the speech server is not running |
+| Grey, still | A permission is missing (Accessibility or microphone) or the hotkey is unavailable |
+
+With Reduce Motion on (System Settings → Accessibility → Display) every look is still: no
+breathing, pulsing, swirl, flash or fade. VoiceOver reads it as a button labelled with
+Pardon's status.
+
 ## What it does and does not do
 
 - Audio stays in memory and is sent only to `http://127.0.0.1:8881/transcribe` (a fixed
@@ -115,10 +157,12 @@ until the next successful paste.
 
 ## Every ingredient
 
-- One Swift file, `ptt/ptt.swift`: ~1220 lines of our own code.
+- Three Swift files, ~2170 lines of our own code: `ptt/ptt.swift` (the app),
+  `ptt/pet.swift` (the orb, drawn in code; no image files) and `ptt/main.swift` (the
+  entry point).
 - Apple system frameworks only: AppKit, AVFoundation, Carbon (keyboard layout lookup),
-  CoreGraphics, ApplicationServices, ServiceManagement, Foundation. No third-party code,
-  no package manager.
+  CoreGraphics, QuartzCore (the orb's animation), ApplicationServices, ServiceManagement,
+  Foundation. No third-party code, no package manager.
 - `ptt/build.sh` (compile, Info.plist, entitlements, sign) and `ptt/make-cert.sh` (stock
   `openssl` and `security`).
 
@@ -136,6 +180,8 @@ until the next successful paste.
   this recurring.
 - **Microphone access denied**: System Settings → Privacy & Security → Microphone, then
   switch Pardon on.
+- **Orb not visible**: check **Show orb** in the menu; if it is on, reset its position with
+  `defaults delete io.github.abandisch.pardon orbOrigin` and relaunch Pardon.
 - **Hotkey does nothing in a password field or in Terminal**: while a password field or
   Terminal's Secure Keyboard Entry is active, macOS may withhold key events from Pardon.
 - **Nothing is pasted**: check System Settings → Privacy & Security → Accessibility, or

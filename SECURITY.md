@@ -26,7 +26,8 @@ The interesting attack surface here is small but real:
   the verification gates exist to catch tampering.
 - Pardon (`ptt/`) — holds Microphone and Accessibility permission, sends audio
   only to `127.0.0.1:8881`, and posts synthetic keystrokes (Cmd-V, optionally
-  Return) into the focused window. The optional self-signed `Pardon` signing
+  Return) into the focused window. Its floating orb is a second trigger under
+  the same rules and needs no further permission. The optional self-signed `Pardon` signing
   identity (`make ptt-cert`) could be used by any program running as the user
   to sign something that inherits those permissions; see `ptt/README.md`.
 - `scripts/release.sh` — creates and pushes a version tag.

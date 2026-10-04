@@ -48,7 +48,8 @@ Open a **new** Claude Code session anywhere, ask anything, and listen.
 
 Hold right Option, speak, release: the transcript is pasted into the focused
 window. Parakeet runs in a second container on `127.0.0.1:8881`; Pardon is the
-menu bar app that records and pastes. Audio never leaves the Mac.
+menu bar app that records and pastes, and its floating orb can be pressed instead
+of the key. Audio never leaves the Mac.
 
 Extra prerequisites:
 

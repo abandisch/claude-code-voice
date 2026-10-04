@@ -18,8 +18,9 @@ goes silent.
 
 It works the other way too: an optional second container runs NVIDIA's
 Parakeet speech-to-text, and Pardon, a small menu bar app, lets you hold the
-right Option key, speak and let go; the transcript is pasted into whatever
-window has focus. Also entirely local: audio never leaves the Mac.
+right Option key (or a small floating orb), speak and let go; the transcript is
+pasted into whatever window has focus. Also entirely local: audio never leaves
+the Mac.
 
 ## Quick start
 
@@ -106,7 +107,7 @@ Both containers run read-only, non-root, with all capabilities dropped
 Speech-to-text follows the same rules: NVIDIA's Parakeet weights, pinned by
 commit and sha256, are exported to ONNX and int8-quantised by `stt/`'s own
 build, which fails unless the result passes accuracy gates; Silero VAD is
-pinned by sha256; ~290 lines of Python in `stt/app/`. Pardon is one Swift file
+pinned by sha256; ~290 lines of Python in `stt/app/`. Pardon is three Swift files
 using Apple system frameworks only, and sends audio nowhere but `127.0.0.1:8881`.
 
 Details, including the verification gates and the pinning procedure:

@@ -1,5 +1,6 @@
 // Pardon: hold Option, speak, release; the transcript from the local STT container
 // (127.0.0.1:8881) is pasted into the focused window. Build with ptt/build.sh.
+// This file is the app's core; main.swift is the entry point and pet.swift the orb.
 import AppKit
 import ApplicationServices
 import AVFoundation
@@ -27,13 +28,19 @@ struct HotkeyMachine {
     static let maxSeconds: TimeInterval = 118
 
     enum Phase: Equatable { case idle, armed(TimeInterval), recording(TimeInterval), busy }
+    // The orb is the pointer trigger; it ignores the side setting.
+    enum Trigger { case key, pointer }
 
     var mode: ModeSetting
     var side: SideSetting
     private(set) var phase: Phase = .idle
+    // Owner of the current or most recent session; survives finished() so the shell can check its physical state.
+    private(set) var trigger = Trigger.key
     private var leftDown = false
     private var rightDown = false
     private var tapStart: TimeInterval?
+    private var pointerHeld = false
+    private var pointerTapStart: TimeInterval?
 
     init(mode: ModeSetting = .hold, side: SideSetting = .right) {
         self.mode = mode
@@ -56,15 +63,33 @@ struct HotkeyMachine {
         if key == .left { leftDown = down } else { rightDown = down }
     }
 
+    private func owns(_ source: Trigger) -> Bool {
+        phase == .idle || trigger == source
+    }
+
+    var isRecording: Bool {
+        if case .recording = phase { return true }
+        return false
+    }
+
+    // Armed or recording from the orb: a hidden orb could not end it.
+    var pointerSessionLive: Bool {
+        switch phase {
+        case .armed, .recording: return trigger == .pointer
+        default: return false
+        }
+    }
+
     mutating func optionDown(_ key: OptionKey, bare: Bool, at t: TimeInterval) -> HotkeyOutput {
         guard matches(key) else { return HotkeyOutput() }
         let alreadyHeld = matchingHeld
         setHeld(key, true)
-        guard !alreadyHeld, phase != .busy else { return HotkeyOutput() }
+        guard !alreadyHeld, phase != .busy, owns(.key) else { return HotkeyOutput() }
         guard bare else { tapStart = nil; return HotkeyOutput() }
         switch mode {
         case .hold:
             guard phase == .idle else { return HotkeyOutput() }
+            trigger = .key
             phase = .armed(t)
             return HotkeyOutput(deadline: t + Self.armDelay)
         case .tap:
@@ -76,7 +101,7 @@ struct HotkeyMachine {
     mutating func optionUp(_ key: OptionKey, at t: TimeInterval) -> HotkeyOutput {
         guard matches(key) else { return HotkeyOutput() }
         setHeld(key, false)
-        guard !matchingHeld, phase != .busy else { return HotkeyOutput() }
+        guard !matchingHeld, phase != .busy, owns(.key) else { return HotkeyOutput() }
         switch mode {
         case .hold:
             switch phase {
@@ -89,6 +114,7 @@ struct HotkeyMachine {
             guard let start = tapStart, t - start <= Self.tapMax else { return HotkeyOutput() }
             switch phase {
             case .idle:
+                trigger = .key
                 phase = .recording(t)
                 return HotkeyOutput(action: .startRecording, deadline: t + Self.maxSeconds)
             case .recording:
@@ -97,6 +123,56 @@ struct HotkeyMachine {
             default: return HotkeyOutput()
             }
         }
+    }
+
+    // A press while still held means the last release was lost: treat it as a fresh press.
+    mutating func pointerDown(at t: TimeInterval) -> HotkeyOutput {
+        pointerHeld = true
+        guard phase != .busy, owns(.pointer) else { return HotkeyOutput() }
+        switch mode {
+        case .hold:
+            guard phase == .idle else { return HotkeyOutput() }
+            trigger = .pointer
+            phase = .armed(t)
+            return HotkeyOutput(deadline: t + Self.armDelay)
+        case .tap:
+            pointerTapStart = t
+            return HotkeyOutput()
+        }
+    }
+
+    mutating func pointerUp(at t: TimeInterval) -> HotkeyOutput {
+        guard pointerHeld else { return HotkeyOutput() }
+        pointerHeld = false
+        guard phase != .busy, owns(.pointer) else { return HotkeyOutput() }
+        switch mode {
+        case .hold:
+            switch phase {
+            case .armed: phase = .idle; return HotkeyOutput()
+            case .recording: phase = .busy; return HotkeyOutput(action: .stopAndSend)
+            default: return HotkeyOutput()
+            }
+        case .tap:
+            defer { pointerTapStart = nil }
+            guard let start = pointerTapStart, t - start <= Self.tapMax else { return HotkeyOutput() }
+            switch phase {
+            case .idle:
+                trigger = .pointer
+                phase = .recording(t)
+                return HotkeyOutput(action: .startRecording, deadline: t + Self.maxSeconds)
+            case .recording:
+                phase = .busy
+                return HotkeyOutput(action: .stopAndSend)
+            default: return HotkeyOutput()
+            }
+        }
+    }
+
+    // A press that became a drag: silent, and only before recording.
+    mutating func pointerCancel() {
+        pointerHeld = false
+        pointerTapStart = nil
+        if case .armed = phase, trigger == .pointer { phase = .idle }
     }
 
     mutating func otherInput(at t: TimeInterval) -> HotkeyOutput {
@@ -125,10 +201,11 @@ struct HotkeyMachine {
     }
 
     // Held flags survive: a missed key-up would swallow the next press, so the shell resyncs
-    // them with releaseAll when Option is not physically down.
+    // them with releaseAll when the session's trigger is not physically down.
     mutating func finished() {
         phase = .idle
         tapStart = nil
+        pointerTapStart = nil
     }
 
     mutating func reset() {
@@ -136,12 +213,16 @@ struct HotkeyMachine {
         leftDown = false
         rightDown = false
         tapStart = nil
+        pointerHeld = false
+        pointerTapStart = nil
     }
 
     mutating func releaseAll(at t: TimeInterval) -> HotkeyOutput {
         leftDown = false
         rightDown = false
         tapStart = nil
+        pointerHeld = false
+        pointerTapStart = nil
         guard mode == .hold else { return HotkeyOutput() }
         switch phase {
         case .armed: phase = .idle; return HotkeyOutput()
@@ -149,6 +230,10 @@ struct HotkeyMachine {
         default: return HotkeyOutput()
         }
     }
+}
+
+func triggerHeld(_ trigger: HotkeyMachine.Trigger, optionDown: Bool, leftButtonDown: Bool) -> Bool {
+    trigger == .pointer ? leftButtonDown : optionDown
 }
 
 let leftOptionKeyCode: Int64 = 58
@@ -399,6 +484,157 @@ func runSelfTest() -> Int32 {
     _ = m.optionDown(.right, bare: true, at: 2)
     check("releaseAll: tap afterwards stops and sends", m.optionUp(.right, at: 2.1) == HotkeyOutput(action: .stopAndSend))
 
+    m = HotkeyMachine()
+    check("pointer: press arms with an armDelay deadline", m.pointerDown(at: 0) == HotkeyOutput(deadline: arm))
+    check("pointer: second press without release does nothing", m.pointerDown(at: 0.1) == none)
+    check("pointer: release before arm is discarded", m.pointerUp(at: 0.2) == none && m.phase == .idle)
+    check("pointer: stale tick after early release yields nothing", m.tick(at: arm) == none)
+    _ = m.pointerDown(at: 0)
+    check("pointer: tick past arm starts recording", m.tick(at: 0.3) == start && m.trigger == .pointer)
+    check("pointer: release while recording stops and sends", m.pointerUp(at: 2) == HotkeyOutput(action: .stopAndSend) && m.phase == .busy)
+    m.finished()
+    _ = m.pointerDown(at: 3); _ = m.tick(at: 3.3)
+    check("pointer: hold cap stops and sends", m.tick(at: 3.3 + HotkeyMachine.maxSeconds).action == .stopAndSend)
+    check("pointer: release after the cap yields nothing", m.pointerUp(at: 200) == none && m.phase == .busy)
+    m = HotkeyMachine(mode: .hold, side: .left)
+    check("pointer: bypasses side left", m.pointerDown(at: 0).deadline == arm)
+    m = HotkeyMachine(mode: .hold, side: .right)
+    check("pointer: bypasses side right", m.pointerDown(at: 0).deadline == arm)
+
+    m = HotkeyMachine()
+    _ = m.pointerDown(at: 0)
+    m.pointerCancel()
+    check("pointer: drag cancels an armed press silently", m.phase == .idle && m.tick(at: 0.3) == none)
+    check("pointer: release after a drag yields nothing", m.pointerUp(at: 0.5) == none && m.phase == .idle)
+    check("pointer: press after a drag arms again", m.pointerDown(at: 1).deadline == 1 + arm)
+    m = HotkeyMachine()
+    _ = m.optionDown(.right, bare: true, at: 0)
+    m.pointerCancel()
+    check("pointer: cancel leaves a key session armed", m.phase == .armed(0))
+
+    m = HotkeyMachine(mode: .tap)
+    _ = m.pointerDown(at: 0)
+    check("pointer tap: click starts recording", m.pointerUp(at: 0.3) == start && m.trigger == .pointer)
+    _ = m.pointerDown(at: 5)
+    check("pointer tap: click while recording stops and sends", m.pointerUp(at: 5.2) == HotkeyOutput(action: .stopAndSend))
+    m = HotkeyMachine(mode: .tap)
+    _ = m.pointerDown(at: 0)
+    check("pointer tap: long press is not a click", m.pointerUp(at: 0.5) == none && m.phase == .idle)
+    _ = m.pointerDown(at: 1); m.pointerCancel()
+    check("pointer tap: drag is not a click", m.pointerUp(at: 1.1) == none && m.phase == .idle)
+    _ = m.pointerDown(at: 2); _ = m.pointerUp(at: 2.1)
+    check("pointer tap: cap stops and sends", m.tick(at: 2.1 + HotkeyMachine.maxSeconds).action == .stopAndSend)
+
+    m = HotkeyMachine()
+    _ = m.optionDown(.right, bare: true, at: 0)
+    check("cross: press while a key session is armed is ignored", m.pointerDown(at: 0.1) == none && m.phase == .armed(0))
+    check("cross: key session still starts", m.tick(at: 0.3) == start && m.trigger == .key)
+    check("cross: release of the ignored press does nothing", m.pointerUp(at: 1) == none && m.phase == .recording(0.3))
+    check("cross: key release stops and sends", m.optionUp(.right, at: 2) == HotkeyOutput(action: .stopAndSend))
+    m = HotkeyMachine()
+    _ = m.pointerDown(at: 0); _ = m.tick(at: 0.3)
+    check("cross: Option while the orb records is ignored", m.optionDown(.right, bare: true, at: 1) == none)
+    check("cross: Option release while the orb records is ignored", m.optionUp(.right, at: 1.5) == none && m.phase == .recording(0.3))
+    check("cross: orb release stops and sends", m.pointerUp(at: 2) == HotkeyOutput(action: .stopAndSend))
+    m = HotkeyMachine(mode: .tap)
+    _ = m.optionDown(.right, bare: true, at: 0); _ = m.optionUp(.right, at: 0.1)
+    _ = m.pointerDown(at: 1)
+    check("cross tap: click does not stop a key recording", m.pointerUp(at: 1.1) == none && m.phase == .recording(0.1))
+    _ = m.optionDown(.right, bare: true, at: 2)
+    check("cross tap: key tap still stops it", m.optionUp(.right, at: 2.1).action == .stopAndSend)
+    m = HotkeyMachine(mode: .tap)
+    _ = m.pointerDown(at: 0); _ = m.pointerUp(at: 0.1)
+    _ = m.optionDown(.right, bare: true, at: 1)
+    check("cross tap: key tap does not stop an orb recording", m.optionUp(.right, at: 1.1) == none && m.phase == .recording(0.1))
+
+    m = HotkeyMachine()
+    _ = m.pointerDown(at: 0)
+    check("pointer releaseAll: armed disarms", m.releaseAll(at: 0.1) == none && m.phase == .idle)
+    _ = m.pointerDown(at: 1); _ = m.tick(at: 1.3)
+    check("pointer releaseAll: recording stops and sends", m.releaseAll(at: 2) == HotkeyOutput(action: .stopAndSend))
+    m.finished()
+    check("pointer releaseAll: next press arms (no stale held flag)", m.pointerDown(at: 3) == HotkeyOutput(deadline: 3 + arm))
+    m.reset()
+    check("pointer reset: next press arms", m.pointerDown(at: 4) == HotkeyOutput(deadline: 4 + arm))
+
+    for mode in [ModeSetting.hold, .tap] {
+        func pointerSession(_ m: inout HotkeyMachine, at t: TimeInterval) -> Bool {
+            _ = m.pointerDown(at: t)
+            let started = mode == .hold ? m.tick(at: t + arm) : m.pointerUp(at: t + 0.1)
+            guard started.action == .startRecording, m.trigger == .pointer else { return false }
+            if mode == .tap { _ = m.pointerDown(at: t + 1) }
+            return m.pointerUp(at: t + 1.1) == HotkeyOutput(action: .stopAndSend)
+        }
+        func keySession(_ m: inout HotkeyMachine, at t: TimeInterval) -> Bool {
+            _ = m.optionDown(.right, bare: true, at: t)
+            let started = mode == .hold ? m.tick(at: t + arm) : m.optionUp(.right, at: t + 0.1)
+            guard started.action == .startRecording, m.trigger == .key else { return false }
+            if mode == .tap { _ = m.optionDown(.right, bare: true, at: t + 1) }
+            return m.optionUp(.right, at: t + 1.1) == HotkeyOutput(action: .stopAndSend)
+        }
+        m = HotkeyMachine(mode: mode)
+        check("handover \(mode): orb session completes", pointerSession(&m, at: 0))
+        m.finished()
+        check("handover \(mode): key session after an orb session", keySession(&m, at: 10))
+        m.finished()
+        check("handover \(mode): orb session after a key session", pointerSession(&m, at: 20))
+    }
+
+    m = HotkeyMachine(mode: .tap)
+    _ = m.pointerDown(at: 0)
+    check("pointer tap: release at exactly tapMax starts", m.pointerUp(at: HotkeyMachine.tapMax).action == .startRecording)
+
+    m = HotkeyMachine(mode: .tap)
+    _ = m.pointerDown(at: 0)
+    _ = m.pointerDown(at: 1)
+    check("pointer tap: press after a lost release is a fresh press", m.pointerUp(at: 1.1).action == .startRecording)
+    _ = m.pointerDown(at: 5)
+    _ = m.pointerDown(at: 6)
+    check("pointer tap: lost release while recording, next click stops", m.pointerUp(at: 6.1) == HotkeyOutput(action: .stopAndSend))
+
+    m = HotkeyMachine()
+    _ = m.pointerDown(at: 0); _ = m.tick(at: 0.3); _ = m.pointerUp(at: 1)
+    check("pointer busy: press during busy yields nothing", m.pointerDown(at: 2) == none)
+    check("pointer busy: its release yields nothing", m.pointerUp(at: 2.1) == none && m.phase == .busy)
+    m.finished()
+    check("pointer busy: next press after finished() arms", m.pointerDown(at: 3) == HotkeyOutput(deadline: 3 + arm))
+
+    m = HotkeyMachine()
+    _ = m.pointerDown(at: 0)
+    check("pointer hold: other input while armed disarms silently", m.otherInput(at: 0.1) == none && m.phase == .idle)
+    check("pointer hold: release after that yields nothing", m.pointerUp(at: 0.2) == none)
+    _ = m.pointerDown(at: 1); _ = m.tick(at: 1.3)
+    check("pointer hold: other input while recording cancels", m.otherInput(at: 2) == HotkeyOutput(action: .cancel) && m.phase == .idle)
+
+    m = HotkeyMachine(mode: .tap)
+    _ = m.pointerDown(at: 0); _ = m.pointerUp(at: 0.1)
+    check("pointer tap: releaseAll keeps recording", m.releaseAll(at: 0.5) == none && m.phase == .recording(0.1))
+    _ = m.pointerDown(at: 1)
+    check("pointer tap: click after releaseAll stops", m.pointerUp(at: 1.1) == HotkeyOutput(action: .stopAndSend))
+    m.finished()
+    _ = m.pointerDown(at: 2)
+    check("pointer tap: click after finished() starts", m.pointerUp(at: 2.1) == HotkeyOutput(action: .startRecording, deadline: 2.1 + HotkeyMachine.maxSeconds))
+    m.reset()
+    _ = m.pointerDown(at: 3)
+    check("pointer tap: click after reset() starts", m.phase == .idle && m.pointerUp(at: 3.1).action == .startRecording)
+
+    m = HotkeyMachine()
+    check("live: idle is not a live orb session", !m.pointerSessionLive && !m.isRecording)
+    _ = m.pointerDown(at: 0)
+    check("live: orb armed", m.pointerSessionLive && !m.isRecording)
+    _ = m.tick(at: 0.3)
+    check("live: orb recording", m.pointerSessionLive && m.isRecording)
+    _ = m.pointerUp(at: 1)
+    check("live: orb busy is not live", !m.pointerSessionLive && !m.isRecording)
+    m.finished()
+    _ = m.optionDown(.right, bare: true, at: 2); _ = m.tick(at: 2.3)
+    check("live: key recording is not an orb session", !m.pointerSessionLive && m.isRecording)
+
+    check("held: key session follows Option", triggerHeld(.key, optionDown: true, leftButtonDown: false)
+          && !triggerHeld(.key, optionDown: false, leftButtonDown: true))
+    check("held: orb session follows the left button", triggerHeld(.pointer, optionDown: false, leftButtonDown: true)
+          && !triggerHeld(.pointer, optionDown: true, leftButtonDown: false))
+
     func decodes(_ code: Int64, _ flags: UInt64, _ key: OptionKey, _ down: Bool, _ bare: Bool) -> Bool {
         guard let d = decodeOption(keyCode: code, flags: flags) else { return false }
         return d.key == key && d.down == down && d.bare == bare
@@ -510,6 +746,8 @@ func runSelfTest() -> Int32 {
     try? fm.removeItem(at: scratch)
     check("mute: temporary directory removed", !fm.fileExists(atPath: scratch.path))
 
+    runPetSelfTest(check)
+
     print("self-test: \(passed) passed, \(failed) failed")
     return failed == 0 ? 0 : 1
 }
@@ -522,6 +760,12 @@ final class Recorder {
     private var samples: [Int16] = []
     private var running = false
     private let outFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(sampleRate), channels: 1, interleaved: true)!
+    private var levelHandler: ((Double) -> Void)?
+    // Called on the main thread with each buffer's voiceLevel; nil skips the measurement.
+    var onLevel: ((Double) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return levelHandler }
+        set { lock.lock(); levelHandler = newValue; lock.unlock() }
+    }
 
     func prepare() {
         _ = engine.inputNode
@@ -554,9 +798,15 @@ final class Recorder {
             return buffer
         }
         guard status != .error, let channel = out.int16ChannelData else { return }
+        let converted = UnsafeBufferPointer(start: channel[0], count: Int(out.frameLength))
         lock.lock()
-        samples.append(contentsOf: UnsafeBufferPointer(start: channel[0], count: Int(out.frameLength)))
+        samples.append(contentsOf: converted)
+        let onLevel = levelHandler
         lock.unlock()
+        if let onLevel = onLevel {
+            let level = voiceLevel(converted)
+            DispatchQueue.main.async { onLevel(level) }
+        }
     }
 
     func stop() -> [Int16] {
@@ -618,7 +868,7 @@ let keyCheckInterval: TimeInterval = 1
 let transcribeTimeout: TimeInterval = 120
 let healthTimeout: TimeInterval = 2
 
-enum DefaultsKey: String { case mode, side, autoSubmit, muteKokoro }
+enum DefaultsKey: String { case mode, side, autoSubmit, muteKokoro, showOrb, orbOrigin }
 enum Cue: String, CaseIterable { case start = "Tink", sent = "Pop", nothingHeard = "Purr", error = "Basso" }
 enum Health { case ready, needsAccessibility, hotkeyUnavailable, micPending, micDenied, serverDown }
 
@@ -709,6 +959,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusLine: NSMenuItem?
     var shown = ""
     var sounds: [Cue: NSSound] = [:]
+    var orb: OrbWindow?
+    // Persists until the next session's start cue.
+    var orbOutcome = OrbOutcome.none
     let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
         c.urlCache = nil
@@ -728,11 +981,16 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var side: SideSetting { SideSetting(rawValue: defaults.string(forKey: DefaultsKey.side.rawValue) ?? "") ?? .right }
     var micAuthorized: Bool { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
     var optionPhysicallyDown: Bool { CGEventSource.flagsState(.combinedSessionState).contains(.maskAlternate) }
+    var triggerPhysicallyDown: Bool {
+        triggerHeld(machine.trigger, optionDown: optionPhysicallyDown,
+                    leftButtonDown: CGEventSource.buttonState(.combinedSessionState, button: .left))
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         defaults.register(defaults: [DefaultsKey.mode.rawValue: ModeSetting.hold.rawValue,
                                      DefaultsKey.side.rawValue: SideSetting.right.rawValue,
-                                     DefaultsKey.autoSubmit.rawValue: false, DefaultsKey.muteKokoro.rawValue: true])
+                                     DefaultsKey.autoSubmit.rawValue: false, DefaultsKey.muteKokoro.rawValue: true,
+                                     DefaultsKey.showOrb.rawValue: true])
         machine = HotkeyMachine(mode: mode, side: side)
         mute.release()
         for cue in Cue.allCases { sounds[cue] = NSSound(named: cue.rawValue) }
@@ -742,6 +1000,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.autoenablesItems = false
         menu.delegate = self
         statusItem.menu = menu
+        let orb = OrbWindow(defaults: defaults, menu: menu)
+        orb.onPress = { [weak self] in self?.orbPressed() }
+        orb.onRelease = { [weak self] in self?.orbReleased() }
+        orb.onDrag = { [weak self] in self?.machine.pointerCancel() }
+        orb.isRecording = { [weak self] in self?.machine.isRecording ?? false }
+        self.orb = orb
+        orb.setShown(defaults.bool(forKey: DefaultsKey.showOrb.rawValue))
 
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: recorder.engine,
                                                queue: .main) { [weak self] _ in
@@ -817,8 +1082,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             } else if event.getIntegerValueField(.eventSourceUserData) != pardonEventTag {
                 let code = event.getIntegerValueField(.keyboardEventKeycode)
                 let flags = event.flags
+                let location = event.location
                 let t = now()
-                DispatchQueue.main.async { controller.handle(type, code, flags, t) }
+                DispatchQueue.main.async { controller.handle(type, code, flags, location, t) }
             }
             return Unmanaged.passUnretained(event)
         }
@@ -841,11 +1107,23 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         tapSource = nil
     }
 
-    func handle(_ type: CGEventType, _ code: Int64, _ flags: CGEventFlags, _ t: TimeInterval) {
+    func handle(_ type: CGEventType, _ code: Int64, _ flags: CGEventFlags, _ location: CGPoint, _ t: TimeInterval) {
+        // The tap sees a press on the orb before the orb does; it is not a chord.
+        if isOrbPress(type: type, onOrb: orb?.contains(location) == true) { return }
         guard type == .flagsChanged, let option = decodeOption(keyCode: code, flags: flags.rawValue) else {
             return feed(machine.otherInput(at: t))
         }
         feed(option.down ? machine.optionDown(option.key, bare: option.bare, at: t) : machine.optionUp(option.key, at: t))
+    }
+
+    // Without the tap a paste could not be posted, so the orb does nothing.
+    func orbPressed() {
+        guard tap != nil else { return }
+        feed(machine.pointerDown(at: now()))
+    }
+
+    func orbReleased() {
+        feed(machine.pointerUp(at: now()))
     }
 
     // Stale ticks are safe only because tick re-checks the phase.
@@ -853,7 +1131,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let deadline = out.deadline {
             DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline - now())) { [weak self] in
                 guard let self = self else { return }
-                if case .armed = self.machine.phase, !self.optionPhysicallyDown {
+                if case .armed = self.machine.phase, !self.triggerPhysicallyDown {
                     return self.feed(self.machine.releaseAll(at: now()))
                 }
                 self.feed(self.machine.tick(at: now()))
@@ -874,15 +1152,20 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard micAuthorized else { return cancelRecording(error: "Microphone could not start") }
         play(.start)
         if defaults.bool(forKey: DefaultsKey.muteKokoro.rawValue) { mute.engage() }
+        syncLevelMeter()
         guard recorder.start() else { return cancelRecording(error: "Microphone could not start") }
         uiState = .listening
         if machine.mode == .hold {
             keyCheck = Timer.scheduledTimer(withTimeInterval: keyCheckInterval, repeats: true) { [weak self] _ in
-                guard let self = self, case .recording = self.machine.phase, !self.optionPhysicallyDown else { return }
+                guard let self = self, case .recording = self.machine.phase, !self.triggerPhysicallyDown else { return }
                 self.feed(self.machine.releaseAll(at: now()))
             }
         }
         refreshUI()
+    }
+
+    func syncLevelMeter() {
+        recorder.onLevel = orb?.isShown == true ? { [weak self] level in self?.orb?.setLevel(level) } : nil
     }
 
     func stopKeyCheck() {
@@ -935,7 +1218,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         stopKeyCheck()
         mute.release()
         machine.finished()
-        if !optionPhysicallyDown { _ = machine.releaseAll(at: now()) }
+        if !triggerPhysicallyDown { _ = machine.releaseAll(at: now()) }
         uiState = .idle
         refreshUI()
     }
@@ -1035,7 +1318,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: UI
 
+    // Also sets the orb's outcome, so this must stay ahead of any early return.
     func play(_ cue: Cue) {
+        orbOutcome = OrbOutcome(cue)
+        updateOrb(health)
         guard let sound = sounds[cue] else { return }
         sound.stop()
         sound.play()
@@ -1068,9 +1354,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    func updateOrb(_ health: Health) {
+        orb?.update(orbLook(ui: uiState, health: health, outcome: orbOutcome), label: "Pardon: \(statusText(health))")
+    }
+
     func refreshUI() {
         guard let button = statusItem?.button else { return }
         let health = self.health
+        updateOrb(health)
         let text = statusText(health)
         let symbol: String
         switch uiState {
@@ -1126,6 +1417,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             on: defaults.bool(forKey: DefaultsKey.autoSubmit.rawValue), rep: DefaultsKey.autoSubmit.rawValue)
         add(menu, "Mute Kokoro while recording", #selector(toggleDefault(_:)),
             on: defaults.bool(forKey: DefaultsKey.muteKokoro.rawValue), rep: DefaultsKey.muteKokoro.rawValue)
+        add(menu, "Show orb", #selector(toggleDefault(_:)),
+            on: defaults.bool(forKey: DefaultsKey.showOrb.rawValue), rep: DefaultsKey.showOrb.rawValue)
         let loginStatus = SMAppService.mainApp.status
         let login = add(menu, loginStatus == .requiresApproval ? "Open at Login (approve in System Settings)" : "Open at Login",
                         #selector(toggleLogin(_:)), on: loginStatus == .enabled, rep: "")
@@ -1174,6 +1467,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func toggleDefault(_ sender: NSMenuItem) {
         guard let key = (sender.representedObject as? String).flatMap(DefaultsKey.init(rawValue:)) else { return }
         defaults.set(!defaults.bool(forKey: key.rawValue), forKey: key.rawValue)
+        guard key == .showOrb else { return }
+        let visible = defaults.bool(forKey: key.rawValue)
+        // A hidden orb could not end its own session: the key ignores it.
+        if !visible, machine.pointerSessionLive { abortSession() }
+        orb?.setShown(visible)
+        syncLevelMeter()
+        refreshUI()
     }
 
     @objc func toggleLogin(_ sender: NSMenuItem) {
@@ -1193,25 +1493,3 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 }
-
-// MARK: - Entry
-
-if CommandLine.arguments.contains("--self-test") {
-    exit(runSelfTest())
-}
-if NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? bundleID)
-    .contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
-    exit(0)
-}
-// pkill and Ctrl-C must still reach applicationWillTerminate, which releases the mute flag.
-let signalSources: [DispatchSourceSignal] = [SIGTERM, SIGINT].map { sig in
-    signal(sig, SIG_IGN)
-    let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-    source.setEventHandler { NSApp.terminate(nil) }
-    source.resume()
-    return source
-}
-let controller = AppController()
-NSApplication.shared.delegate = controller
-NSApplication.shared.setActivationPolicy(.accessory)
-NSApplication.shared.run()

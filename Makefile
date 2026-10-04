@@ -172,7 +172,7 @@ ptt:
 	if [ -n "$$($(PTT_PIDS))" ]; then echo "Pardon did not quit within 5 s; quit it from its menu and run make ptt again"; exit 1; fi
 	@mkdir -p "$$(dirname "$(PTT_APP)")" && rm -rf "$(PTT_APP)" && \
 	/usr/bin/ditto ptt/build/Pardon.app "$(PTT_APP)" && /usr/bin/open "$(PTT_APP)"
-	@echo "Pardon installed at $(PTT_APP); its mic icon is in the menu bar; grant Microphone and Accessibility when asked (see ptt/README.md)"
+	@echo "Pardon installed at $(PTT_APP); its mic icon is in the menu bar and its orb near the bottom-right of the screen; grant Microphone and Accessibility when asked (see ptt/README.md)"
 
 ## Compile Pardon unsigned into a temp dir and run its self-test (no GUI, mic or network)
 test-ptt:
