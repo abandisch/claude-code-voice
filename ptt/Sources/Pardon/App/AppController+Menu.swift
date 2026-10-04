@@ -37,6 +37,7 @@ extension AppController: NSMenuDelegate {
             on: defaults.bool(forKey: DefaultsKey.autoSubmit.rawValue), rep: DefaultsKey.autoSubmit.rawValue)
         add(menu, "Mute Kokoro while recording", #selector(toggleDefault(_:)),
             on: defaults.bool(forKey: DefaultsKey.muteKokoro.rawValue), rep: DefaultsKey.muteKokoro.rawValue)
+        menu.addItem(.separator())
         add(menu, "Show pet", #selector(toggleDefault(_:)),
             on: defaults.bool(forKey: DefaultsKey.showOrb.rawValue), rep: DefaultsKey.showOrb.rawValue)
         let characters = NSMenu()
@@ -53,6 +54,7 @@ extension AppController: NSMenuDelegate {
         let animate = add(menu, "Animate when idle", #selector(toggleDefault(_:)),
                           on: defaults.bool(forKey: DefaultsKey.animateIdle.rawValue), rep: DefaultsKey.animateIdle.rawValue)
         animate.isEnabled = character.isEnabled
+        menu.addItem(.separator())
         let loginStatus = SMAppService.mainApp.status
         let login = add(menu, loginStatus == .requiresApproval ? "Open at Login (approve in System Settings)" : "Open at Login",
                         #selector(toggleLogin(_:)), on: loginStatus == .enabled, rep: "")
