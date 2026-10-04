@@ -3,6 +3,7 @@
 import AppKit
 import ApplicationServices
 import AVFoundation
+import Carbon
 import CoreGraphics
 import Foundation
 import ServiceManagement
@@ -219,6 +220,40 @@ func transportResult(_ error: Error) -> TranscribeResult {
     (error as? URLError)?.code == .timedOut ? .timedOut : .unreachable
 }
 
+let maxReplyBytes = 256 * 1024
+
+// A declared length of -1 means unknown; the received bytes are checked as they arrive.
+func replyFits(_ bytes: Int64) -> Bool {
+    bytes <= Int64(maxReplyBytes)
+}
+
+// Unknown on both sides counts as unchanged; anything else that differs is a move.
+func focusMoved(from before: pid_t?, to after: pid_t?) -> Bool {
+    before != after
+}
+
+// Virtual key codes are 0..<128; the lowest code that matches wins.
+func keyCode(producing target: String, fallback: CGKeyCode, translate: (CGKeyCode) -> String?) -> CGKeyCode {
+    for code in CGKeyCode(0)..<128 where translate(code) == target { return code }
+    return fallback
+}
+
+// Cmd-V is posted with Command held, and some layouts ("Dvorak – QWERTY ⌘") move keys under
+// Command: look up "v" with Command first, then without, then the ANSI position.
+func pasteKey(command: (CGKeyCode) -> String?, plain: (CGKeyCode) -> String?) -> CGKeyCode {
+    let none = CGKeyCode.max
+    let found = keyCode(producing: "v", fallback: none, translate: command)
+    return found != none ? found : keyCode(producing: "v", fallback: pasteKeyCode, translate: plain)
+}
+
+enum SyntheticKey { case paste, submit }
+
+// Focus is checked again before each key: a move before Cmd-V posts neither key, a move
+// between Cmd-V and Return skips only Return.
+func mayPost(_ key: SyntheticKey, pasted: Bool, moved: Bool) -> Bool {
+    !moved && (key == .paste || pasted)
+}
+
 // MARK: - Self-test
 
 // Headless: no GUI, microphone or network; touches only a temporary directory.
@@ -420,6 +455,37 @@ func runSelfTest() -> Int32 {
     check("transport: timeout", transportResult(URLError(.timedOut)) == .timedOut)
     check("transport: cannot connect", transportResult(URLError(.cannotConnectToHost)) == .unreachable)
 
+    check("constants: maxReplyBytes is 256 KB", maxReplyBytes == 262_144)
+    check("reply: under the cap fits", replyFits(Int64(maxReplyBytes - 1)))
+    check("reply: exactly the cap fits", replyFits(Int64(maxReplyBytes)))
+    check("reply: over the cap is refused", !replyFits(Int64(maxReplyBytes + 1)))
+    check("reply: unknown declared length (-1) fits", replyFits(-1))
+
+    check("focus: same app has not moved", !focusMoved(from: 501, to: 501))
+    check("focus: different app has moved", focusMoved(from: 501, to: 502))
+    check("focus: unknown both times has not moved", !focusMoved(from: nil, to: nil))
+    check("focus: known then unknown has moved", focusMoved(from: 501, to: nil))
+    check("focus: unknown then known has moved", focusMoved(from: nil, to: 501))
+
+    let qwerty: [CGKeyCode: String] = [0: "a", 1: "s", 6: "z", 7: "x", 8: "c", 9: "v", 11: "b"]
+    let dvorak: [CGKeyCode: String] = [0: "a", 1: "o", 6: ";", 7: "q", 8: "j", 9: "k", 47: "v"]
+    check("paste key: QWERTY is 9", keyCode(producing: "v", fallback: pasteKeyCode) { qwerty[$0] } == 9)
+    check("paste key: Dvorak is 47", keyCode(producing: "v", fallback: pasteKeyCode) { dvorak[$0] } == 47)
+    check("paste key: no match falls back to 9", keyCode(producing: "v", fallback: pasteKeyCode) { _ in "x" } == 9)
+    check("paste key: nil results are skipped", keyCode(producing: "v", fallback: pasteKeyCode) { $0 == 30 ? "v" : nil } == 30)
+    check("paste key: two keys type v, lowest wins", keyCode(producing: "v", fallback: pasteKeyCode) { [9: "v", 47: "v"][$0] } == 9)
+    check("paste key: match at code 0 is found", keyCode(producing: "v", fallback: pasteKeyCode) { $0 == 0 ? "v" : nil } == 0)
+    check("paste key: match at code 127 is found", keyCode(producing: "v", fallback: pasteKeyCode) { $0 == 127 ? "v" : nil } == 127)
+    check("paste key: Command lookup wins (Dvorak – QWERTY ⌘)", pasteKey(command: { qwerty[$0] }, plain: { dvorak[$0] }) == 9)
+    check("paste key: no Command match falls back to plain", pasteKey(command: { _ in nil }, plain: { dvorak[$0] }) == 47)
+    check("paste key: neither matches falls back to 9", pasteKey(command: { _ in "x" }, plain: { _ in nil }) == 9)
+
+    check("keys: paste when focus stayed", mayPost(.paste, pasted: false, moved: false))
+    check("keys: no paste when focus moved", !mayPost(.paste, pasted: false, moved: true))
+    check("keys: Return after paste when focus stayed", mayPost(.submit, pasted: true, moved: false))
+    check("keys: no Return when focus moved after paste", !mayPost(.submit, pasted: true, moved: true))
+    check("keys: no Return when the paste was skipped", !mayPost(.submit, pasted: false, moved: false))
+
     let fm = FileManager.default
     let tmp = ProcessInfo.processInfo.environment["TMPDIR"] ?? NSTemporaryDirectory()
     let scratch = URL(fileURLWithPath: tmp).appendingPathComponent("pardon-selftest-\(UUID().uuidString)")
@@ -539,7 +605,7 @@ let serverURL = URL(string: "http://127.0.0.1:8881")!
 let bundleID = "io.github.abandisch.pardon"
 // "PARD": our own synthetic events carry it and the tap ignores them.
 let pardonEventTag: Int64 = 0x5041_5244
-// ANSI "V" position; a non-QWERTY layout would need a lookup.
+// ANSI "V" position: used when the current layout has no Unicode data or no key types "v".
 let pasteKeyCode: CGKeyCode = 9
 let returnKeyCode: CGKeyCode = 36
 let pasteDelay: TimeInterval = 0.1
@@ -558,11 +624,67 @@ enum Health { case ready, needsAccessibility, hotkeyUnavailable, micPending, mic
 
 func now() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
 
-final class RedirectRefuser: NSObject, URLSessionTaskDelegate {
+// Not final: ReplyCollector subclasses it.
+class RedirectRefuser: NSObject, URLSessionTaskDelegate {
     // A 3xx then surfaces as a failed response; the audio is never re-sent elsewhere.
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)
+    }
+}
+
+// Per-task delegate for /transcribe. A per-task delegate does not get the session delegate's
+// redirect handling, so it inherits the refusal.
+final class ReplyCollector: RedirectRefuser, URLSessionDataDelegate {
+    private var body = Data()
+    private var tooLarge = false
+    private let done: (TranscribeResult) -> Void
+
+    init(done: @escaping (TranscribeResult) -> Void) {
+        self.done = done
+        super.init()
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        tooLarge = !replyFits(response.expectedContentLength)
+        completionHandler(tooLarge ? .cancel : .allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard !tooLarge, replyFits(Int64(body.count + data.count)) else {
+            tooLarge = true
+            return dataTask.cancel()
+        }
+        body.append(data)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let status = (task.response as? HTTPURLResponse)?.statusCode ?? 0
+        if tooLarge { return done(.failed("Speech server reply too large")) }
+        done(error.map(transportResult) ?? parseTranscription(status: status, body: body))
+    }
+}
+
+// Must run on the main thread (Text Input Sources).
+func currentPasteKeyCode() -> CGKeyCode {
+    guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+          let raw = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { return pasteKeyCode }
+    let data = Unmanaged<CFData>.fromOpaque(raw).takeUnretainedValue()
+    guard let bytes = CFDataGetBytePtr(data) else { return pasteKeyCode }
+    let layout = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
+    // No dead keys: each code is translated on its own, never as part of a sequence.
+    func translate(_ code: CGKeyCode, modifiers: UInt32) -> String? {
+        var deadKeys: UInt32 = 0
+        var length = 0
+        var chars = [UniChar](repeating: 0, count: 4)
+        let status = UCKeyTranslate(layout, code, UInt16(kUCKeyActionDown), modifiers, UInt32(LMGetKbdType()),
+                                    OptionBits(kUCKeyTranslateNoDeadKeysMask), &deadKeys, chars.count, &length, &chars)
+        return status == noErr && length > 0 ? String(utf16CodeUnits: chars, count: length) : nil
+    }
+    return withExtendedLifetime(source) {
+        pasteKey(command: { translate($0, modifiers: UInt32(cmdKey >> 8) & 0xFF) },
+                 plain: { translate($0, modifiers: 0) })
     }
 }
 
@@ -578,6 +700,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var serverUp: Bool?
     var lastError: String?
     var lastTranscript: String?
+    var targetPID: pid_t?
     var sessionID = 0
     var keyCheck: Timer?
     var tap: CFMachPort?
@@ -770,6 +893,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func stopAndSend() {
         stopKeyCheck()
         let samples = recorder.stop()
+        targetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         uiState = .transcribing
         refreshUI()
         guard !samples.isEmpty else { play(.nothingHeard); return endSession() }
@@ -778,14 +902,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         request.httpMethod = "POST"
         request.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
         request.httpBody = wavData(samples: samples, sampleRate: sampleRate)
-        session.dataTask(with: request) { [weak self] data, response, error in
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let result = error.map(transportResult) ?? parseTranscription(status: status, body: data ?? Data())
+        let task = session.dataTask(with: request)
+        task.delegate = ReplyCollector { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, id == self.sessionID else { return }
                 self.received(result)
             }
-        }.resume()
+        }
+        task.resume()
     }
 
     func received(_ result: TranscribeResult) {
@@ -829,7 +953,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Deliver
 
     func writeTranscript(_ text: String, to pb: NSPasteboard) {
-        pb.clearContents()
+        pb.prepareForNewContents(with: .currentHostOnly)
         let item = NSPasteboardItem()
         item.setString(text, forType: .string)
         // Clipboard managers that honour this marker skip the transcript.
@@ -839,7 +963,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func deliver(_ text: String) {
         let id = sessionID
+        let target = targetPID
+        let focusError = "Focus changed; use Copy last transcript"
+        func moved() -> Bool { focusMoved(from: target, to: NSWorkspace.shared.frontmostApplication?.processIdentifier) }
         lastTranscript = text
+        guard !moved() else { return cancelRecording(error: focusError) }
         let pb = NSPasteboard.general
         let saved: [NSPasteboardItem] = (pb.pasteboardItems ?? []).map { item in
             let copy = NSPasteboardItem()
@@ -852,15 +980,21 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let ours = pb.changeCount
         let submit = defaults.bool(forKey: DefaultsKey.autoSubmit.rawValue) && wordCount(text) >= 3
 
+        var pasted = false
         DispatchQueue.main.asyncAfter(deadline: .now() + pasteDelay) {
             guard id == self.sessionID else { return }
-            self.postKey(pasteKeyCode, flags: .maskCommand)
+            guard mayPost(.paste, pasted: pasted, moved: moved()) else {
+                self.lastError = focusError
+                return self.play(.error)
+            }
+            self.postKey(currentPasteKeyCode(), flags: .maskCommand)
+            pasted = true
             self.lastError = nil
             self.play(.sent)
         }
         if submit {
             DispatchQueue.main.asyncAfter(deadline: .now() + pasteDelay + returnDelay) {
-                guard id == self.sessionID else { return }
+                guard id == self.sessionID, mayPost(.submit, pasted: pasted, moved: moved()) else { return }
                 self.postKey(returnKeyCode, flags: [])
             }
         }

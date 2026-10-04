@@ -44,14 +44,17 @@ sentence at a time, which is the only shape the graph promises to compute.
    and the Hugging Face commit, then pin `KOKORO_REVISION` in the Dockerfile.
    Copy the versions from `/models/convert-freeze.txt` into
    `build/requirements-convert.txt` to make the conversion reproducible too.
-3. `make digest` and set `IMAGE=kokoro-tts@sha256:…` when running.
+3. `make digest` and set `IMAGE=kokoro-tts@sha256:…` for `make run`
+   (`KOKORO_IMAGE=` when running `docker compose` directly).
 4. `make scan` — Docker Scout CVE report for the final image.
 
-## Runtime hardening (`run.sh`)
+## Runtime hardening (`compose.yaml`)
 
+Both containers (Kokoro, and Parakeet speech-to-text) get the same profile.
 No mounts. Port published on 127.0.0.1 only. Read-only root filesystem,
 small `noexec` tmpfs for `/tmp`, all capabilities dropped,
-`no-new-privileges`, non-root uid 65532, pids/memory/cpu limits.
+`no-new-privileges`, non-root uid 65532, pids/memory/cpu limits. They share
+compose's own project bridge network, `claude-code-voice_default`.
 
 Why not `--network none`? Docker cannot publish a port from a container with
 no network. The image has no shell, no curl, no credentials and nothing that

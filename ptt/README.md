@@ -45,9 +45,10 @@ and reopen Pardon.
 
 `make test-ptt` compiles an unsigned copy into a temp directory and runs its self-test
 (the hotkey state machine, key decoding, WAV header, transcript sanitising, response
-parsing, the mute flag; no GUI, microphone or network, and it touches only a temporary
-directory). Also `make stop-ptt` and `make clean-ptt` (stops the app and removes
-`ptt/build` and the installed app; not the certificate or the entries in System Settings).
+parsing, the reply size cap, the focus check, the paste key lookup, the mute flag; no
+GUI, microphone or network, and it touches only a temporary directory). Also
+`make stop-ptt` and `make clean-ptt` (stops the app and removes `ptt/build` and the
+installed app; not the certificate or the entries in System Settings).
 
 ## Using it
 
@@ -77,10 +78,18 @@ directory). Also `make stop-ptt` and `make clean-ptt` (stops the app and removes
   formatting characters become spaces, and at most 4000 characters are pasted.
 - The clipboard is restored about a second after the paste (unless something else has
   changed it in between), and the transcript is marked transient so clipboard managers
-  can skip it.
-- The paste goes to whichever window has focus when the transcript arrives. Pardon cannot
-  know whether the paste landed: the last transcript can be copied from the menu (**Copy
-  last transcript**) until Pardon quits. It is kept in memory only.
+  can skip it. It stays on this Mac: it is not shared with your other devices through
+  Universal Clipboard.
+- The paste is Cmd-V on whichever key types "v" with Command held in your current keyboard
+  layout, so it works on Dvorak and other non-QWERTY layouts, including those whose
+  shortcuts stay on QWERTY positions (such as "Dvorak – QWERTY ⌘").
+- The paste goes to the focused window of the app that was in front when you stopped
+  speaking (if you switch windows within that app meanwhile, it lands in the new one). If
+  another app has come to the front by the time the transcript arrives, nothing is pasted
+  (nor submitted) and Basso plays. Focus is checked again just before Cmd-V and before
+  Return: a switch before the paste stops both, a switch after it stops only Return. Pardon cannot know whether a paste landed: the last
+  transcript can be copied from the menu (**Copy last transcript**) until Pardon quits. It
+  is kept in memory only.
 
 Sounds: Tink when recording starts, Pop when the text is pasted, Purr when nothing was
 heard, Basso on any error. After an error the menu's status line says what went wrong
@@ -92,7 +101,8 @@ until the next successful paste.
   address; no setting), never through a proxy and never to a redirect target. The only
   other request is the `/health` check every 10 s and when the menu opens; it pauses
   during a recording or transcription. Anything listening on `127.0.0.1:8881` receives
-  the audio, so keep the container running or quit Pardon.
+  the audio, so keep the container running or quit Pardon. A transcription reply larger
+  than 256 KB is refused without being read further.
 - No transcript or audio is logged or written to disk.
 - **Microphone**: to record while you are dictating. The microphone is on only while
   recording.
@@ -105,9 +115,10 @@ until the next successful paste.
 
 ## Every ingredient
 
-- One Swift file, `ptt/ptt.swift`: ~1080 lines of our own code.
-- Apple system frameworks only: AppKit, AVFoundation, CoreGraphics, ApplicationServices,
-  ServiceManagement, Foundation. No third-party code, no package manager.
+- One Swift file, `ptt/ptt.swift`: ~1220 lines of our own code.
+- Apple system frameworks only: AppKit, AVFoundation, Carbon (keyboard layout lookup),
+  CoreGraphics, ApplicationServices, ServiceManagement, Foundation. No third-party code,
+  no package manager.
 - `ptt/build.sh` (compile, Info.plist, entitlements, sign) and `ptt/make-cert.sh` (stock
   `openssl` and `security`).
 

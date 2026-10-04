@@ -190,7 +190,7 @@ def gate_g2_wer(vad, mel, asr: Transducer, audio: np.ndarray, nemo_text: str) ->
         failures.append(f"NeMo WER {w_nemo:.1%}: the fixture or its reference text is wrong")
     if result["no_speech"] or w > G2_MAX_ONNX_WER:
         failures.append(f"int8 WER {w:.1%} > {G2_MAX_ONNX_WER:.0%}: int8 missed the accuracy bar; shipping "
-                        "fp32 (~2.4 GB encoder) needs a deliberate decision and a higher --memory in run-stt.sh")
+                        "fp32 (~2.4 GB encoder) needs a deliberate decision and a higher mem_limit in compose.yaml")
     if failures:
         raise GateFailed("gate G2 (WER): " + "; ".join(failures))
     return result["text"]

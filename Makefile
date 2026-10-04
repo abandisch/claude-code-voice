@@ -4,21 +4,44 @@ VOICE ?= bf_emma
 SPEED ?= 1.0
 APP_DIR ?= app
 
-.PHONY: build run stop logs test say mute unmute install scan digest lock sbom clean
+.PHONY: build run stop logs test test-compose say mute unmute install scan digest lock sbom clean
 
 ## Build the image (BuildKit; attaches SBOM + provenance attestations)
 build:
 	docker buildx build --platform $(PLATFORM) --sbom=true --provenance=true \
 		--load -t $(IMAGE) .
 
+## Recreate the kokoro service from compose.yaml (PORT=… overrides 8880)
+# compose refuses its fixed container_name while a kokoro from the old docker run script exists.
 run:
-	IMAGE=$(IMAGE) ./run.sh
+	docker rm -f kokoro >/dev/null 2>&1 || true
+	KOKORO_IMAGE=$(IMAGE) $(if $(PORT),KOKORO_PORT=$(PORT)) docker compose up -d --force-recreate kokoro
 
+# Removes the compose-created kokoro and one left by the old docker run script alike.
 stop:
 	docker rm -f kokoro 2>/dev/null || true
 
 logs:
-	docker logs -f kokoro
+	docker compose logs -f kokoro
+
+COMPOSE_FILE_FOR_TEST ?=
+# One service's rendered profile; compose renders mem_limit as a string of bytes.
+COMPOSE_HARDENED = def hardened($$mem; $$port; $$tmp): \
+	.read_only == true and .cap_drop == ["ALL"] and .security_opt == ["no-new-privileges"] \
+	and .user == "65532:65532" and .pids_limit == 64 and .cpus == 4 and .restart == "unless-stopped" \
+	and .mem_limit == $$mem and .memswap_limit == $$mem \
+	and .ports == [{mode: "ingress", host_ip: "127.0.0.1", target: $$port, published: ($$port | tostring), protocol: "tcp"}] \
+	and .tmpfs == ["/tmp:rw,nosuid,nodev,noexec,size=" + $$tmp] \
+	and (keys | any(IN("volumes", "build", "privileged", "cap_add", "network_mode", "pid", "ipc", "devices")) | not); \
+	.services | (.kokoro | hardened("1572864000"; 8880; "128m")) and (.parakeet | hardened("2621440000"; 8881; "256m"))
+
+## Check both services' hardening as compose renders compose.yaml (no Docker daemon needed)
+test-compose:
+	@env -u KOKORO_IMAGE -u KOKORO_PORT -u STT_IMAGE -u STT_PORT -u PORT \
+		docker compose $(if $(COMPOSE_FILE_FOR_TEST),-f $(COMPOSE_FILE_FOR_TEST)) config --format json \
+	| /usr/bin/jq -e '$(COMPOSE_HARDENED)' >/dev/null \
+	&& echo "PASS: compose renders the hardened profile for kokoro and parakeet" \
+	|| { echo "FAIL: compose does not render the expected hardened profile (inspect: docker compose config)"; exit 1; }
 
 ## Speak a test sentence through the running container
 test:
@@ -33,7 +56,7 @@ test:
 scan:
 	docker scout cves $(IMAGE)
 
-## Print the image digest so you can pin IMAGE=kokoro-tts@sha256:... in run.sh
+## Print the image digest so you can pin KOKORO_IMAGE=kokoro-tts@sha256:... (STT_IMAGE= for parakeet)
 digest:
 	docker image inspect --format '{{index .RepoDigests 0}}{{"\n"}}{{.Id}}' $(IMAGE)
 
@@ -89,14 +112,18 @@ build-stt:
 	docker buildx build --platform $(PLATFORM) --sbom=true --provenance=true \
 		$(STT_BUILD_ARGS) --load -t $(STT_IMAGE) -f stt/Dockerfile stt
 
+## Recreate the parakeet service from compose.yaml (PORT=… overrides 8881)
+# compose refuses its fixed container_name while a parakeet from the old docker run script exists.
 run-stt:
-	IMAGE=$(STT_IMAGE) ./stt/run-stt.sh
+	docker rm -f parakeet >/dev/null 2>&1 || true
+	STT_IMAGE=$(STT_IMAGE) $(if $(PORT),STT_PORT=$(PORT)) docker compose up -d --force-recreate parakeet
 
+# Removes the compose-created parakeet and one left by the old docker run script alike.
 stop-stt:
 	docker rm -f parakeet 2>/dev/null || true
 
 logs-stt:
-	docker logs -f parakeet
+	docker compose logs -f parakeet
 
 ## Transcribe a sentence spoken by the running Kokoro container (needs `make run`)
 test-stt:
@@ -129,6 +156,10 @@ clean-stt: stop-stt
 PTT_APP ?= $(HOME)/Applications/Pardon.app
 # Refuse to rm -rf anything that is not an .app bundle path.
 PTT_APP_GUARD = case "$(PTT_APP)" in *?.app) ;; *) echo "PTT_APP must end in .app: $(PTT_APP)"; exit 1;; esac
+# pgrep -x only finds candidates by name; each is kept only if ps -o comm= (the full executable
+# path) is $(PTT_APP)'s binary. Not pgrep -f: it would match this recipe's own shell.
+PTT_PIDS = for p in $$(/usr/bin/pgrep -x Pardon); do [ "$$(/bin/ps -o comm= -p $$p)" = "$(PTT_APP)/Contents/MacOS/Pardon" ] && echo $$p; done; true
+PTT_STOP = pids=$$($(PTT_PIDS)); [ -z "$$pids" ] || /bin/kill $$pids 2>/dev/null || true
 
 .PHONY: ptt test-ptt ptt-cert stop-ptt clean-ptt
 
@@ -136,9 +167,9 @@ PTT_APP_GUARD = case "$(PTT_APP)" in *?.app) ;; *) echo "PTT_APP must end in .ap
 ptt:
 	@$(PTT_APP_GUARD)
 	./ptt/build.sh
-	@/usr/bin/pkill -x Pardon || true; \
-	for i in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/pgrep -x Pardon >/dev/null || break; sleep 0.5; done; \
-	if /usr/bin/pgrep -x Pardon >/dev/null; then echo "Pardon did not quit within 5 s; quit it from its menu and run make ptt again"; exit 1; fi
+	@$(PTT_STOP); \
+	for i in 1 2 3 4 5 6 7 8 9 10; do [ -n "$$($(PTT_PIDS))" ] || break; sleep 0.5; done; \
+	if [ -n "$$($(PTT_PIDS))" ]; then echo "Pardon did not quit within 5 s; quit it from its menu and run make ptt again"; exit 1; fi
 	@mkdir -p "$$(dirname "$(PTT_APP)")" && rm -rf "$(PTT_APP)" && \
 	/usr/bin/ditto ptt/build/Pardon.app "$(PTT_APP)" && /usr/bin/open "$(PTT_APP)"
 	@echo "Pardon installed at $(PTT_APP); its mic icon is in the menu bar; grant Microphone and Accessibility when asked (see ptt/README.md)"
@@ -153,9 +184,20 @@ ptt-cert:
 	./ptt/make-cert.sh
 
 stop-ptt:
-	@/usr/bin/pkill -x Pardon || true
+	@$(PTT_STOP)
 
 ## Stop Pardon; remove ptt/build and the installed app (not the certificate or the macOS permission entries)
 clean-ptt: stop-ptt
 	@$(PTT_APP_GUARD)
 	rm -rf ptt/build "$(PTT_APP)"
+
+# --- Release: tag main as vX.Y.Z (tag only) ---
+.PHONY: release test-release
+
+## Check main is clean and pushed, run test-ptt, choose patch/minor/major, tag and push that tag
+release:
+	./scripts/release.sh
+
+## Version arithmetic and tag filtering of scripts/release.sh (no git changes)
+test-release:
+	./scripts/release.sh --self-test
