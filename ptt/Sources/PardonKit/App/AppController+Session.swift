@@ -7,6 +7,7 @@ extension AppController {
         sessionID += 1
         guard micAuthorized else { return cancelRecording(error: "Microphone could not start") }
         play(.start)
+        stopTestVoice()
         if defaults.bool(forKey: DefaultsKey.muteKokoro.rawValue) { mute.engage() }
         syncLevelMeter()
         guard recorder.start() else { return cancelRecording(error: "Microphone could not start") }
@@ -42,10 +43,10 @@ extension AppController {
         request.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
         request.httpBody = wavData(samples: samples, sampleRate: sampleRate)
         let task = session.dataTask(with: request)
-        task.delegate = ReplyCollector { [weak self] result in
+        task.delegate = ReplyCollector { [weak self] reply in
             DispatchQueue.main.async {
                 guard let self = self, id == self.sessionID else { return }
-                self.received(result)
+                self.received(transcribeResult(reply))
             }
         }
         task.resume()
@@ -56,8 +57,8 @@ extension AppController {
         case .text(let text): serverUp = true; deliver(text)
         case .noSpeech: serverUp = true; play(.nothingHeard); endSession()
         case .failed(let reason): serverUp = true; cancelRecording(error: String(sanitise(reason).prefix(80)))
-        case .timedOut: cancelRecording(error: "Timed out waiting for the speech server")
-        case .unreachable: serverUp = false; cancelRecording(error: "Speech server not reachable")
+        case .timedOut: cancelRecording(error: "Timed out waiting for the transcription server")
+        case .unreachable: serverUp = false; cancelRecording(error: "Transcription server not reachable")
         }
     }
 

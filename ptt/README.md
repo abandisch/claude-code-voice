@@ -2,9 +2,11 @@
 
 A small macOS menu bar app for the Parakeet STT container: hold the Option key (or the
 floating pet), speak, let go, and the transcript is pasted into whatever window has focus.
-Audio is recorded in memory and sent only to `127.0.0.1:8881`. No audio or transcript is
-written to disk or to any log; settings live in the app's preferences file, and the Kokoro
-mute flag (below) is a file.
+Its menu also controls speech, the Kokoro text-to-speech that reads Claude Code's replies
+aloud: mute it, and choose its voice and speed. Audio is recorded in memory and sent only to
+`127.0.0.1:8881`. No audio or transcript is written to disk or to any log; settings live in
+the app's preferences file, and the speech mute flag and voice and speed settings (below)
+are files under `~/.claude/hooks/`. Pardon does not start or stop either container.
 
 ## Before the first build
 
@@ -52,7 +54,12 @@ pet's gesture and its drag grace for a recording, hit test, placement, saved pos
 looks and how long an outcome shows, animations, the idle frame rate and the Animate when
 idle toggle, voice level and level smoothing, and the characters (the registry, the saved
 choice, the arc reactor's ring geometry and animations, and that it draws nothing outside
-its circle); they need no GUI, microphone or network and touch only a temporary directory.
+its circle), and speech: reading and writing `pardon.conf` (hostile and malformed lines
+included, with the same cases as the hooks' own test, `make test-hooks`), symlinks in place
+of `pardon.conf` or the mute flag, the voice list and its caps, voice names, speed steps,
+when the speech items are enabled, the test request's body, when a test may start or play
+and the check that its reply is a WAV, and the manual mute through a recording; they need
+no GUI, microphone or network and touch only a temporary directory.
 A pass ends with a `Test run with … tests … passed` line. Maintainers: setting
 `PARDON_CHECK_LOG` to a fresh file path while running the tests records the name of every
 executed check, one per line, so the number of checks can be counted. Also
@@ -74,14 +81,21 @@ installed app; not the certificate or the entries in System Settings).
   a transcription in progress; nothing is pasted.
 - **Auto-submit (Return)**, off by default: presses Return after pasting, but only when
   the transcript has at least three words. With it on, Pardon types and submits whatever
-  the local speech server returns into the focused window, so leave it off for terminals
-  unless you accept that.
-- **Mute Kokoro while recording**, on by default: creates `~/.claude/hooks/mute` (content
+  the local transcription server returns into the focused window, so leave it off for
+  terminals unless you accept that.
+- **Mute speech** is the same switch as `make mute` / `make unmute`: on, it creates an empty
+  `~/.claude/hooks/mute` and the voice hooks stay quiet until it is switched off; the item
+  shows a tick whenever that file is there, whoever made it, except while it is Pardon's
+  own recording marker (below). Off removes the file. It survives recordings and restarts
+  of Pardon.
+- **Mute speech while recording**, on by default: creates `~/.claude/hooks/mute` (content
   `pardon`) when recording starts and removes it once the transcript has been pasted (the
   flag stays through transcription and paste, not only while you speak), so the voice hook
   stays quiet. It stops new speech; it does not cut off a sentence already playing. A mute
-  you set with `make mute` before recording is left alone; `make mute` during a recording
-  does not survive it (the file still holds `pardon`, so it is removed at the end).
+  you set with **Mute speech** or `make mute` before recording is left alone, and so is one
+  set with **Mute speech** during a recording. `make mute` during a recording does not
+  survive it (the file still holds `pardon`, so it is removed at the end). Switching **Mute
+  speech** off during a recording keeps speech muted until the recording's paste is done.
 - **Open at Login** registers the installed copy in `~/Applications`.
 - Transcripts are cleaned before pasting: line breaks, tabs and other control or
   formatting characters become spaces, and at most 4000 characters are pasted.
@@ -103,6 +117,32 @@ installed app; not the certificate or the entries in System Settings).
 Sounds: Tink when recording starts, Pop when the text is pasted, Purr when nothing was
 heard, Basso on any error. After an error the menu's status line says what went wrong
 until the next successful paste.
+
+### Speech
+
+The menu's speech section talks to the Kokoro container on `127.0.0.1:8880`; Pardon does
+not start or stop it (`make run` does).
+
+- **Speech: running** / **Speech: not running — make run** / **Speech: checking…**: from a
+  `/health` check every 10 s and when the menu opens. It does not change the menu bar icon
+  or the pet, which are about transcription only.
+- **Voice** lists the voices the container offers (fetched when speech comes up and
+  when the menu opens while it is running), shown as names such as Emma (Female); the accent is added when two
+  voices would otherwise share a name; at most 100 are listed. **Speed** offers 0.8 to 1.5.
+  Both, and **Test voice**, are greyed out while speech is not known to be running, and
+  follow it while the menu is open.
+- Picking a voice or a speed saves it and says a test sentence with it at once. **Test
+  voice** says the test sentence with the current choice. The test plays even when speech
+  is muted (you asked for it), never while recording, and stops when a recording starts so
+  the microphone does not pick it up. If it fails there is no sound and no alert. Without
+  `~/.claude` a picked voice or speed is said as a test but not saved, so no tick moves.
+- The choice is stored in `~/.claude/hooks/pardon.conf`, two lines such as `VOICE=bf_emma`
+  and `SPEED=1.0`; nothing else is accepted from it. The menu shows what the file says
+  (bf_emma at 1.0 when it is missing); if the file names a voice the container does not
+  list, or a speed not in the menu, nothing is ticked. The voice hooks use it once
+  `make install` has installed hooks that read it. Pardon writes it only if `~/.claude`
+  exists. Pardon reads through a symlink at that path, like the hooks, but replaces it with a
+  plain file when it writes.
 
 ## The pet
 
@@ -153,7 +193,7 @@ The arc reactor: a white-hot core inside cyan rings, on a dark disc.
 | Three lit blocks stepping clockwise round the segment ring, a lap every 1.2 s | Transcribing |
 | One ring rippling out from the core | Pasted |
 | Brief dim | Nothing heard |
-| Amber-red, turning slowly | The last attempt failed (back to normal after about ten seconds; the menu's status line still says it failed), or the speech server is not running |
+| Amber-red, turning slowly | The last attempt failed (back to normal after about ten seconds; the menu's status line still says it failed), or the transcription server is not running |
 | Grey, dimmer, still | A permission is missing (Accessibility or microphone) or the hotkey is unavailable |
 
 The blue Orb character:
@@ -165,7 +205,7 @@ The blue Orb character:
 | Swirling shimmer | Transcribing |
 | One quick flash | Pasted |
 | Soft fade | Nothing heard |
-| Amber-red | The last attempt failed (back to normal after about ten seconds; the menu's status line still says it failed), or the speech server is not running |
+| Amber-red | The last attempt failed (back to normal after about ten seconds; the menu's status line still says it failed), or the transcription server is not running |
 | Grey, still | A permission is missing (Accessibility or microphone) or the hotkey is unavailable |
 
 With **Animate when idle** off, the turning, pulsing and breathing of the ready, pasted,
@@ -180,11 +220,21 @@ steady, larger, whiter core and a brighter segment ring.
 
 - Audio stays in memory and is sent only to `http://127.0.0.1:8881/transcribe` (a fixed
   address; no setting), never through a proxy and never to a redirect target. The only
-  other request is the `/health` check every 10 s and when the menu opens; it pauses
-  during a recording or transcription. Anything listening on `127.0.0.1:8881` receives
-  the audio, so keep the container running or quit Pardon. A transcription reply larger
-  than 256 KB is refused without being read further.
-- No transcript or audio is logged or written to disk.
+  other request to that port is the `/health` check every 10 s and when the menu opens; it
+  pauses during a recording or transcription. Anything listening on `127.0.0.1:8881`
+  receives the audio, so keep the container running or quit Pardon. A transcription reply
+  larger than 256 KB is refused without being read further.
+- To the text-to-speech container at `http://127.0.0.1:8880` (also fixed, same rules: no
+  proxy, no redirects) Pardon sends only three requests: `GET /health` every 10 s and when
+  the menu opens (also during a recording; reply capped at 1 KB), `GET /voices` when the
+  menu opens while speech is running and when it comes up (reply capped at 16 KB, at most
+  100 valid voice ids kept), and `POST /speak` with the fixed sentence "This is how I
+  sound." and the chosen voice and speed, only when you pick a voice or speed or choose
+  Test voice (15 s timeout, reply capped at 4 MB; a newer test
+  cancels one still on its way). No recorded audio or transcript ever goes to it. The test
+  reply is played from memory and not saved, and only if it is a WAV of at most 30 s.
+- No transcript or audio is logged or written to disk. What Pardon writes: its preferences,
+  `~/.claude/hooks/pardon.conf`, and `~/.claude/hooks/mute`.
 - **Microphone**: to record while you are dictating. The microphone is on only while
   recording.
 - **Accessibility**: to see the Option key from any app, and to post Cmd-V (and Return)
@@ -192,13 +242,15 @@ steady, larger, whiter core and a brighter segment ring.
   ask for Input Monitoring.
 - The app is signed with the hardened runtime, which blocks library injection through
   `DYLD_INSERT_LIBRARIES` into a process that holds the Microphone and Accessibility grants.
-- Settings live in the app's own preferences (`io.github.abandisch.pardon`).
+- Settings live in the app's own preferences (`io.github.abandisch.pardon`), except the
+  voice and speed (`~/.claude/hooks/pardon.conf`) and the speech mute
+  (`~/.claude/hooks/mute`), which the voice hooks read.
 
 ## Every ingredient
 
-- ~2000 lines of our own Swift in `ptt/Sources/`: `Pardon/main.swift` (the entry point) and
-  the `PardonKit` library: `App/`, `Hotkey/`, `Audio/`, `Transcription/` and `Delivery/` (the
-  app), `Pet/` (the pet, its blue Orb character and the arc reactor character, both drawn in
+- ~2400 lines of our own Swift in `ptt/Sources/`: `Pardon/main.swift` (the entry point) and
+  the `PardonKit` library: `App/`, `Hotkey/`, `Audio/`, `Transcription/`, `Delivery/` and
+  `Speech/` (the app), `Pet/` (the pet, its blue Orb character and the arc reactor character, both drawn in
   code with no image files). The tests are in `ptt/Tests/PardonKitTests/` and are not
   part of the app.
 - Apple system frameworks only: AppKit, AVFoundation, Carbon (keyboard layout lookup),
@@ -212,10 +264,16 @@ steady, larger, whiter core and a brighter segment ring.
 ## Troubleshooting
 
 - **Slashed microphone icon**: any of Accessibility missing, microphone denied, or the
-  speech server not running. Open the menu to see which; it offers a button to the right
-  System Settings pane when a permission is missing.
-- **Speech server not running**: `make run-stt`, then wait for `parakeet ready:` in
+  transcription server not running. Open the menu to see which; it offers a button to the
+  right System Settings pane when a permission is missing.
+- **Transcription server not running**: `make run-stt`, then wait for `parakeet ready:` in
   `make logs-stt`.
+- **Speech: not running** in the menu: `make run` starts the Kokoro container. The Voice,
+  Speed and Test voice items are greyed out until the next check finds it (within 10 s, or
+  reopen the menu); they turn on by themselves, even with the menu open.
+- **Voice or speed changes in the menu but replies still sound the same**: the voice hooks
+  read `pardon.conf` only once `make install` has installed the version that does; run
+  `make install` again.
 - **Accessibility shows Pardon switched on but the menu still asks for it** (or says the
   hotkey is unavailable): after an ad-hoc rebuild, System Settings may still show Pardon
   switched on while macOS refuses it. Remove Pardon from the Accessibility list with the

@@ -60,7 +60,7 @@ extension AppController {
             case .hotkeyUnavailable: return "Hotkey unavailable — switch Pardon off and on in Accessibility"
             case .micPending: return "Waiting for microphone permission"
             case .micDenied: return "Microphone access denied"
-            case .serverDown: return "Speech server not running — make run-stt"
+            case .serverDown: return "Transcription server not running — make run-stt"
             }
         }
     }

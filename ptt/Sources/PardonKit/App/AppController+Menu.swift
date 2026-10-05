@@ -4,6 +4,9 @@ import ServiceManagement
 extension AppController: NSMenuDelegate {
     public func menuWillOpen(_ menu: NSMenu) {
         checkHealth()
+        checkSpeech()
+        // Otherwise setSpeechUp fetches them when speech comes up.
+        if speechUp == true { fetchVoices() }
     }
 
     public func menuNeedsUpdate(_ menu: NSMenu) {
@@ -35,8 +38,8 @@ extension AppController: NSMenuDelegate {
         menu.addItem(.separator())
         add(menu, "Auto-submit (Return)", #selector(toggleDefault(_:)),
             on: defaults.bool(forKey: DefaultsKey.autoSubmit.rawValue), rep: DefaultsKey.autoSubmit.rawValue)
-        add(menu, "Mute Kokoro while recording", #selector(toggleDefault(_:)),
-            on: defaults.bool(forKey: DefaultsKey.muteKokoro.rawValue), rep: DefaultsKey.muteKokoro.rawValue)
+        menu.addItem(.separator())
+        addSpeechItems(menu)
         menu.addItem(.separator())
         add(menu, "Show pet", #selector(toggleDefault(_:)),
             on: defaults.bool(forKey: DefaultsKey.showOrb.rawValue), rep: DefaultsKey.showOrb.rawValue)
@@ -66,6 +69,39 @@ extension AppController: NSMenuDelegate {
         about.isEnabled = false
         menu.addItem(about)
         menu.addItem(NSMenuItem(title: "Quit Pardon", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    }
+
+    // Voice and speed checkmarks come from pardon.conf, which the hooks read too.
+    func addSpeechItems(_ menu: NSMenu) {
+        let status = NSMenuItem(title: speechStatusText(speechUp), action: nil, keyEquivalent: "")
+        status.isEnabled = false
+        menu.addItem(status)
+        speechLine = status
+        add(menu, "Mute speech", #selector(toggleManualMute(_:)), on: mute.isManual, rep: "")
+        add(menu, "Mute speech while recording", #selector(toggleDefault(_:)),
+            on: defaults.bool(forKey: DefaultsKey.muteKokoro.rawValue), rep: DefaultsKey.muteKokoro.rawValue)
+        let conf = speechConf.read()
+        let voiceMenu = NSMenu()
+        voiceMenu.autoenablesItems = false
+        fillVoices(voiceMenu, conf: conf)
+        let voice = NSMenuItem(title: "Voice", action: nil, keyEquivalent: "")
+        voice.submenu = voiceMenu
+        menu.addItem(voice)
+        voiceItem = voice
+        let speedMenu = NSMenu()
+        speedMenu.autoenablesItems = false
+        for s in speedSteps { add(speedMenu, s, #selector(setSpeed(_:)), on: s == conf.speed, rep: s) }
+        let speed = NSMenuItem(title: "Speed", action: nil, keyEquivalent: "")
+        speed.submenu = speedMenu
+        menu.addItem(speed)
+        speedItem = speed
+        testItem = add(menu, "Test voice", #selector(testVoice(_:)), on: false, rep: "")
+        applySpeechEnabled()
+    }
+
+    func fillVoices(_ menu: NSMenu, conf: SpeechConf) {
+        menu.removeAllItems()
+        for v in voiceNames(voices) { add(menu, v.name, #selector(setVoice(_:)), on: v.id == conf.voice, rep: v.id) }
     }
 
     @discardableResult

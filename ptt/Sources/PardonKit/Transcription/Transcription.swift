@@ -15,9 +15,17 @@ func transportResult(_ error: Error) -> TranscribeResult {
     (error as? URLError)?.code == .timedOut ? .timedOut : .unreachable
 }
 
+func transcribeResult(_ reply: CollectedReply) -> TranscribeResult {
+    switch reply {
+    case .body(let status, let data): return parseTranscription(status: status, body: data)
+    case .tooLarge: return .failed("Transcription server reply too large")
+    case .transport(let error): return transportResult(error)
+    }
+}
+
 let maxReplyBytes = 256 * 1024
 
 // A declared length of -1 means unknown; the received bytes are checked as they arrive.
-func replyFits(_ bytes: Int64) -> Bool {
-    bytes <= Int64(maxReplyBytes)
+func replyFits(_ bytes: Int64, limit: Int = maxReplyBytes) -> Bool {
+    bytes <= Int64(limit)
 }

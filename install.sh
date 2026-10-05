@@ -5,6 +5,7 @@
 #   2. installs hook/speak-kokoro.sh  as ~/.claude/hooks/speak.sh   (Stop: 🔊 line)
 #      and     hook/notify-kokoro.sh as ~/.claude/hooks/notify.sh  (Notification:
 #      announces when Claude is waiting on you); backs up any old copies
+#      (never touches ~/.claude/hooks/pardon.conf, where voice and speed now live)
 #   3. registers both hooks in ~/.claude/settings.json (backs it up first)
 #   4. appends hook/CLAUDE-snippet.md to ~/.claude/CLAUDE.md if the 🔊 rule is absent
 #
@@ -43,7 +44,7 @@ install_hook() {  # $1 = repo source, $2 = installed name
   local src="hook/$1" dst="$CLAUDE_DIR/hooks/$2"
   if [ -f "$dst" ] && ! cmp -s "$src" "$dst"; then
     cp "$dst" "$dst.bak.$(date +%Y%m%d%H%M%S)"
-    warn "existing $2 backed up (your VOICE/SPEED edits live in the .bak)"
+    warn "existing $2 backed up (edits made in it live in the .bak; pardon.conf is untouched)"
   fi
   cp "$src" "$dst" && chmod +x "$dst"
   ok "installed $dst"

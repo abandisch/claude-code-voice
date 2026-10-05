@@ -27,22 +27,6 @@ Pardon is the name of the whole project: local text-to-speech for Claude Code
 (Kokoro), local speech-to-text (Parakeet), and the Pardon menu bar app that ties
 them together.
 
-Formerly called claude-code-voice. Existing clones keep working through GitHub's
-redirect; to point yours at the new name (optional):
-
-```sh
-git remote set-url origin git@github.com:abandisch/pardon.git     # SSH
-git remote set-url origin https://github.com/abandisch/pardon.git # https
-```
-
-If containers from the old name exist, remove them and their network once;
-otherwise `docker compose up -d` clashes with their fixed names (`make run`
-replaces them itself but leaves the old network behind):
-
-```sh
-docker compose -p claude-code-voice down
-```
-
 ## Quick start
 
 Requires macOS on Apple Silicon, Docker Desktop, and a (free) Docker ID for
@@ -92,17 +76,20 @@ one `pardon` group (the compose project name).
 
 ## Configure
 
-- **Voice / speed:** `VOICE=` and `SPEED=` at the top of each hook
-  (`hook/speak-kokoro.sh`, `hook/notify-kokoro.sh`). Baked in: `bf_emma` (British female, default),
+- **Voice / speed:** the Voice and Speed submenus in the Pardon menu. Without the app,
+  put `VOICE=` and `SPEED=` lines in `~/.claude/hooks/pardon.conf` (e.g.
+  `VOICE=bm_fable`, `SPEED=1.2`); the values at the top of each hook
+  (`hook/speak-kokoro.sh`, `hook/notify-kokoro.sh`) are the fallback. Baked in: `bf_emma` (British female, default),
   `bm_fable`, `bm_daniel`, `am_adam`, `am_liam`, `am_fenrir`. Any other Kokoro
   voice: add it to `VOICES` in the Dockerfile and `make build`.
 - **Port:** `PORT=8890 make run`, and update `URL=` in the hook.
 - **Stop / logs:** `make stop`, `make logs`.
-- **Every target:** `make` on its own (or `make help`) lists them.
+- **Every target:** `make` on its own (or `make help`) lists them; `make test-hooks`
+  checks the hooks without Docker or audio.
 - **Say anything:** `make say TEXT="Good evening" VOICE=bm_fable SPEED=1.2` —
   handy for auditioning voices or startling the cat.
-- **Meetings:** `make mute` silences both hooks; `make unmute` restores the
-  voice (and says so).
+- **Meetings:** `make mute` (or Mute speech in the Pardon menu) silences
+  both hooks; `make unmute` restores the voice (and says so).
 - **Persona:** the voice reads whatever Claude writes — give it a character
   with a one-paragraph rule in your global CLAUDE.md. Ready-made: butler,
   ship's computer, laconic sysadmin, noir detective in
@@ -131,7 +118,8 @@ commit and sha256, are exported to ONNX and int8-quantised by `stt/`'s own
 build, which fails unless the result passes accuracy gates; Silero VAD is
 pinned by sha256; ~290 lines of Python in `stt/app/`. The Pardon app is a Swift
 package in `ptt/` using Apple system frameworks only, and sends audio nowhere but
-`127.0.0.1:8881`.
+`127.0.0.1:8881`; from the text-to-speech container on `127.0.0.1:8880` it asks only for
+its health, the voice list and a fixed test sentence.
 
 Details, including the verification gates and the pinning procedure:
 [docs/DESIGN.md](docs/DESIGN.md) for Kokoro, [stt/README.md](stt/README.md) for

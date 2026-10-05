@@ -29,5 +29,13 @@ import Testing
         check("reply: exactly the cap fits", replyFits(Int64(maxReplyBytes)))
         check("reply: over the cap is refused", !replyFits(Int64(maxReplyBytes + 1)))
         check("reply: unknown declared length (-1) fits", replyFits(-1))
+        check("reply: a given limit replaces the default", replyFits(1024, limit: 1024) && !replyFits(1025, limit: 1024))
+    }
+
+    @Test func collected() {
+        check("collected: a body is parsed", transcribeResult(.body(status: 200, data: Data(#"{"text": "hi"}"#.utf8))) == .text("hi"))
+        check("collected: too large", transcribeResult(.tooLarge) == .failed("Transcription server reply too large"))
+        check("collected: transport timeout", transcribeResult(.transport(URLError(.timedOut))) == .timedOut)
+        check("collected: transport unreachable", transcribeResult(.transport(URLError(.cannotConnectToHost))) == .unreachable)
     }
 }

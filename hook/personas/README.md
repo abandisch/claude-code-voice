@@ -4,9 +4,10 @@ A persona changes how Claude *writes* the 🔊 line — the voice model just rea
 it. Pick one, copy its block into your global `~/.claude/CLAUDE.md` (replace
 the optional persona comment that `make install` added), start a new session.
 
-Mix freely: edit the wording, swap the suggested voice (`VOICE=` in
-`~/.claude/hooks/speak.sh` and `notify.sh`), or write your own — it's one
-paragraph of instructions, nothing more.
+Mix freely: edit the wording, swap the suggested voice (the Voice submenu in the
+Pardon menu, or `VOICE=` in `~/.claude/hooks/pardon.conf`; the `VOICE=` in the
+installed hooks is only the fallback), or write your own — it's one paragraph of
+instructions, nothing more.
 
 | Persona | Flavour | Suggested voice |
 |---|---|---|

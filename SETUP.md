@@ -35,7 +35,9 @@ replaces (`~/.claude/settings.json.bak.*`, `~/.claude/hooks/speak.sh.bak.*`); it
 only appends to your global CLAUDE.md. What it appends is `hook/CLAUDE-snippet.md`;
 the persona line in it is optional — edit it, delete it, or pick a ready-made one
 from `hook/personas/`. After an update that changes a hook, `make install` backs up
-your previous copy as a `.bak`, even if you never edited it; that is harmless.
+your previous copy as a `.bak`, even if you never edited it; that is harmless. Voice
+and speed chosen in `~/.claude/hooks/pardon.conf` survive a reinstall: `make install`
+never touches that file.
 
 ## Verify
 
@@ -80,7 +82,7 @@ from a slashed microphone to a plain one.
 
 **Verify.** Click into a text field, hold right Option, say a sentence, release:
 Tink when recording starts, Pop when the text is pasted. A slashed icon means a
-permission is missing or the speech server is down; open Pardon's menu to see which.
+permission is missing or the transcription server is down; open Pardon's menu to see which.
 Everything else: `ptt/README.md` → Troubleshooting.
 
 `docker compose up -d` starts both containers together (`compose.yaml`); Docker
@@ -90,18 +92,24 @@ Desktop shows them as one `pardon` group (the compose project name).
 
 `make run` and `make run-stt` now replace containers started by the old scripts by
 themselves. Remove the old network once with `docker network rm kokoro-net`. No image
-rebuild is needed.
+rebuild is needed. Run `make install` once to get hooks that read voice and speed from
+`~/.claude/hooks/pardon.conf` (what the Voice and Speed submenus in the Pardon menu write).
+To upgrade an existing install, in order: `git pull`, `make install` (new hooks),
+`make ptt` (new menu).
 
 ## Options
 
-- **Voice / speed:** `VOICE=` and `SPEED=` at the top of `~/.claude/hooks/speak.sh`
-  and `~/.claude/hooks/notify.sh` (the waiting-on-you announcer).
-  Baked in: `bf_emma` (default), `bm_fable`, `bm_daniel`, `am_adam`, `am_liam`, `am_fenrir`. Others: add to `VOICES` in the
+- **Voice / speed:** the Voice and Speed submenus in the Pardon menu. Without the app, put
+  `VOICE=` and `SPEED=` lines (e.g. `VOICE=bm_fable`, `SPEED=1.2`) in
+  `~/.claude/hooks/pardon.conf`; both hooks read it, and the values at the top of
+  `~/.claude/hooks/speak.sh` and `~/.claude/hooks/notify.sh` (the waiting-on-you
+  announcer) are the fallback. Baked in: `bf_emma` (default), `bm_fable`, `bm_daniel`, `am_adam`, `am_liam`, `am_fenrir`. Others: add to `VOICES` in the
   Dockerfile and `make build` (ids: hexgrad/Kokoro-82M `voices/`).
 - **Port:** `PORT=8890 make run`, then change `URL=` in the hook. Speech-to-text:
   `PORT=… make run-stt`; Pardon always uses `127.0.0.1:8881`.
 - **Stop / restart / logs:** `make stop`, `make run`, `make logs`.
-- **Mute / unmute:** `make mute`, `make unmute` (flag file `~/.claude/hooks/mute`).
+- **Mute / unmute:** `make mute`, `make unmute`, or Mute speech in the Pardon menu
+  (flag file `~/.claude/hooks/mute`).
 - **Supply-chain pinning** (optional): `docs/DESIGN.md`.
 
 ## Uninstall
@@ -110,7 +118,7 @@ rebuild is needed.
 `docker rmi kokoro-tts:local` (and `docker rmi parakeet-stt:local` if you built it); remove
 the `hooks.Stop` and `hooks.Notification` entries from `~/.claude/settings.json` (or restore the `.bak`), delete
 `~/.claude/hooks/speak.sh` and `~/.claude/hooks/notify.sh`, the mute flag `~/.claude/hooks/mute`
-if present and the `*.bak.*` backups `make install` left in `~/.claude` and `~/.claude/hooks`, and remove the "Spoken summary" section from
+and `~/.claude/hooks/pardon.conf` if present and the `*.bak.*` backups `make install` left in `~/.claude` and `~/.claude/hooks`, and remove the "Spoken summary" section from
 `~/.claude/CLAUDE.md`.
 
 The Pardon app: `make clean-ptt` (stops it, removes `ptt/build` and `~/Applications/Pardon.app`);

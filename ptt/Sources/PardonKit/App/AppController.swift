@@ -14,6 +14,17 @@ public final class AppController: NSObject, NSApplicationDelegate {
     var machine = HotkeyMachine()
     var uiState = UIState.idle
     var serverUp: Bool?
+    // Text-to-speech: kept apart from Health, so it never changes the icon or the pet.
+    var speechUp: Bool?
+    var voices: [String] = []
+    var speechLine: NSMenuItem?
+    var voiceItem: NSMenuItem?
+    var speedItem: NSMenuItem?
+    var testItem: NSMenuItem?
+    let speechConf = SpeechConfFile()
+    var testPlayer: AVAudioPlayer?
+    var testTask: URLSessionDataTask?
+    var testGeneration = 0
     var lastError: String?
     var lastTranscript: String?
     var targetPID: pid_t?
@@ -115,10 +126,12 @@ public final class AppController: NSObject, NSApplicationDelegate {
         permissionTimer.tolerance = 0.5
         let healthTimer = Timer.scheduledTimer(withTimeInterval: healthInterval, repeats: true) { [weak self] _ in
             self?.checkHealth()
+            self?.checkSpeech()
         }
         healthTimer.tolerance = 2
         checkTap()
         checkHealth()
+        checkSpeech()
         refreshUI()
     }
 

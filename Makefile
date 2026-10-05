@@ -18,7 +18,7 @@ VOICE ?= bf_emma
 SPEED ?= 1.0
 APP_DIR ?= app
 
-.PHONY: build run stop logs test test-compose say mute unmute install scan digest lock sbom clean
+.PHONY: build run stop logs test test-compose test-hooks say mute unmute install scan digest lock sbom clean
 
 ## Build the image (BuildKit; attaches SBOM + provenance attestations)
 build:
@@ -67,6 +67,10 @@ test:
 		-H 'Content-Type: application/json' \
 		-d '{"text":"Text to speech is online and working.","voice":"bf_emma"}' \
 		-o /tmp/kokoro-test.wav && afplay /tmp/kokoro-test.wav
+
+## Check both hooks' pardon.conf parsing, mute and say fallback (no Docker or audio)
+test-hooks:
+	./hook/test-hooks.sh
 
 ## Vulnerability scan of the built image (free, local)
 scan:
